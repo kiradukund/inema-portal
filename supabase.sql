@@ -321,3 +321,135 @@ begin
 
   raise notice 'Seed data inserted successfully for user %', test_user_id;
 end $$;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- ADMIN DASHBOARD TABLES — Run this in Supabase SQL Editor
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- ─── IMPORTED CLIENTS (from Excel) ───────────────────────────────────────
+create table if not exists imported_clients (
+  id                uuid primary key default uuid_generate_v4(),
+  full_name         text not null,
+  phone             text,
+  nid               text,
+  email             text,
+  employer          text,
+  address           text,
+  bank_account      text,
+  collateral        text,
+  notes             text,
+  created_at        timestamptz default now(),
+  updated_at        timestamptz default now()
+);
+
+-- ─── IMPORTED LOANS (from Excel) ─────────────────────────────────────────
+create table if not exists imported_loans (
+  id                uuid primary key default uuid_generate_v4(),
+  client_id         uuid references imported_clients(id) on delete cascade,
+  client_name       text not null,
+  principal         numeric(15,2) not null,
+  loan_type         text default 'salary_advance',
+  term_months       int,
+  date_offered      date,
+  repayment_date    date,
+  total_due         numeric(15,2),
+  amount_paid       numeric(15,2) default 0,
+  outstanding       numeric(15,2),
+  status            text default 'active' check (status in ('active','paid','overdue','partial')),
+  collateral        text,
+  has_installments  boolean default false,
+  notes             text,
+  source            text default 'excel',
+  created_at        timestamptz default now(),
+  updated_at        timestamptz default now()
+);
+
+-- ─── INSTALLMENTS ────────────────────────────────────────────────────────
+create table if not exists installments (
+  id            uuid primary key default uuid_generate_v4(),
+  loan_id       uuid references imported_loans(id) on delete cascade,
+  client_name   text,
+  num           int,
+  amount        numeric(15,2),
+  due_date      date,
+  status        text default 'not paid' check (status in ('paid','not paid','partial','overdue')),
+  amount_paid   numeric(15,2) default 0,
+  paid_date     date,
+  notes         text,
+  created_at    timestamptz default now()
+);
+
+-- ─── EXPENSES ────────────────────────────────────────────────────────────
+create table if not exists expenses (
+  id          uuid primary key default uuid_generate_v4(),
+  category    text not null,
+  amount      numeric(15,2) not null,
+  month       date not null,
+  status      text default 'paid' check (status in ('paid','pending')),
+  notes       text,
+  created_at  timestamptz default now()
+);
+
+-- ─── TAX & COMPLIANCE DEADLINES ──────────────────────────────────────────
+create table if not exists compliance_deadlines (
+  id            uuid primary key default uuid_generate_v4(),
+  title         text not null,
+  description   text,
+  deadline_date date not null,
+  category      text check (category in ('tax','bnr','rssb','other')),
+  is_recurring  boolean default true,
+  recurrence    text,
+  is_done       boolean default false,
+  done_at       timestamptz,
+  created_at    timestamptz default now()
+);
+
+-- ─── EXCEL UPLOAD LOG ────────────────────────────────────────────────────
+create table if not exists excel_uploads (
+  id            uuid primary key default uuid_generate_v4(),
+  filename      text,
+  uploaded_at   timestamptz default now(),
+  records_count int,
+  status        text default 'success',
+  notes         text
+);
+
+-- ─── RLS FOR ADMIN TABLES ────────────────────────────────────────────────
+alter table imported_clients enable row level security;
+alter table imported_loans enable row level security;
+alter table installments enable row level security;
+alter table expenses enable row level security;
+alter table compliance_deadlines enable row level security;
+alter table excel_uploads enable row level security;
+
+create policy "admin_only_clients" on imported_clients
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create policy "admin_only_loans" on imported_loans
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create policy "admin_only_installments" on installments
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create policy "admin_only_expenses" on expenses
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create policy "admin_only_deadlines" on compliance_deadlines
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create policy "admin_only_uploads" on excel_uploads
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+
+-- ─── SET YOUR ACCOUNT AS ADMIN ───────────────────────────────────────────
+-- Run this after confirming your user UUID:
+update profiles set role = 'admin' where email = 'iradukundacyusakevin@gmail.com';
+
+-- ─── SEED COMPLIANCE DEADLINES ───────────────────────────────────────────
+insert into compliance_deadlines (title, description, deadline_date, category, is_recurring, recurrence) values
+('PAYE Declaration', 'Pay As You Earn - Devotha salary tax to RRA', '2026-07-15', 'tax', true, 'monthly_15th'),
+('RSSB Pension', 'Employer + Employee pension contribution to RSSB', '2026-07-15', 'rssb', true, 'monthly_15th'),
+('RSSB Maternity', 'Maternity leave contribution to RSSB', '2026-07-15', 'rssb', true, 'monthly_15th'),
+('CBHI Contribution', 'Community Based Health Insurance contribution', '2026-07-15', 'rssb', true, 'monthly_15th'),
+('VAT on Fees', '18% VAT on loan upfront fees collected', '2026-07-15', 'tax', true, 'monthly_15th'),
+('BNR Q2 Report', 'BNR Quarterly Supervisory Report (Apr-Jun 2026)', '2026-07-30', 'bnr', true, 'quarterly'),
+('CRB Monthly Report', 'Credit Reference Bureau monthly reporting', '2026-07-15', 'bnr', true, 'monthly_15th'),
+('Corporate Income Tax', 'Annual CIT Declaration (0% rate - microfinance exemption until 2030)', '2027-03-31', 'tax', true, 'annual'),
+('BNR Annual Report', 'Annual report to National Bank of Rwanda', '2027-03-31', 'bnr', true, 'annual'),
+('CIT Quarterly Prepayment Q3', 'Quarterly income tax prepayment to RRA', '2026-09-30', 'tax', true, 'quarterly'),
+('BNR Q3 Report', 'BNR Quarterly Supervisory Report (Jul-Sep 2026)', '2026-10-30', 'bnr', true, 'quarterly')
+on conflict do nothing;

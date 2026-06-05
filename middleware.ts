@@ -27,23 +27,49 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
 
-  // Protected portal routes — redirect to login if not authenticated
-  if (pathname.startsWith('/dashboard') || pathname.startsWith('/loans') || pathname.startsWith('/profile')) {
-    if (!user) {
-      return NextResponse.redirect(new URL('/login?redirect=' + pathname, request.url))
+  // Protect client portal routes
+  if (pathname.startsWith('/dashboard') || pathname.startsWith('/loans') || pathname.startsWith('/profile') || pathname.startsWith('/calculator')) {
+    if (!user) return NextResponse.redirect(new URL('/login?redirect=' + pathname, request.url))
+  }
+
+  // Protect admin routes
+  if (pathname.startsWith('/admin')) {
+    if (!user) return NextResponse.redirect(new URL('/login?redirect=/admin', request.url))
+    // Check admin role
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+    if (profile?.role !== 'admin') {
+      return NextResponse.redirect(new URL('/dashboard?error=unauthorized', request.url))
     }
   }
 
-  // Auth routes — redirect to dashboard if already logged in
-  if (pathname === '/login' || pathname === '/register') {
-    if (user) {
-      return NextResponse.redirect(new URL('/dashboard', request.url))
+  // If logged in and hitting /login, redirect based on role
+  if (pathname === '/login' && user) {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single()
+    if (profile?.role === 'admin') {
+      return NextResponse.redirect(new URL('/admin', request.url))
     }
+    return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
   return response
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/loans/:path*', '/profile/:path*', '/login', '/register'],
+  matcher: [
+    '/dashboard/:path*',
+    '/loans/:path*',
+    '/profile/:path*',
+    '/calculator/:path*',
+    '/admin/:path*',
+    '/login',
+    '/register',
+  ],
 }

@@ -27,15 +27,20 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
 
+  // HOMEPAGE — always show, never redirect
+  if (pathname === '/') {
+    return response
+  }
+
   // Protect client portal routes
-  if (pathname.startsWith('/dashboard') || pathname.startsWith('/loans') || pathname.startsWith('/profile') || pathname.startsWith('/calculator')) {
+  if (pathname.startsWith('/dashboard') || pathname.startsWith('/loans') ||
+      pathname.startsWith('/profile') || pathname.startsWith('/calculator')) {
     if (!user) return NextResponse.redirect(new URL('/login?redirect=' + pathname, request.url))
   }
 
   // Protect admin routes
   if (pathname.startsWith('/admin')) {
     if (!user) return NextResponse.redirect(new URL('/login?redirect=/admin', request.url))
-    // Check admin role
     const { data: profile } = await supabase
       .from('profiles')
       .select('role')
@@ -46,7 +51,7 @@ export async function middleware(request: NextRequest) {
     }
   }
 
-  // If logged in and hitting /login, redirect based on role
+  // Login page — if already logged in, redirect based on role
   if (pathname === '/login' && user) {
     const { data: profile } = await supabase
       .from('profiles')
@@ -64,12 +69,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/dashboard/:path*',
-    '/loans/:path*',
-    '/profile/:path*',
-    '/calculator/:path*',
-    '/admin/:path*',
-    '/login',
-    '/register',
+    '/((?!_next/static|_next/image|favicon.ico|api/).*)',
   ],
 }

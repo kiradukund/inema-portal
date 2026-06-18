@@ -27,40 +27,22 @@ export async function middleware(request: NextRequest) {
   const { data: { user } } = await supabase.auth.getUser()
   const { pathname } = request.nextUrl
 
-  // HOMEPAGE — always show, never redirect
-  if (pathname === '/') {
-    return response
-  }
+  if (pathname === '/') return response
 
-  // Protect client portal routes
   if (pathname.startsWith('/dashboard') || pathname.startsWith('/loans') ||
       pathname.startsWith('/profile') || pathname.startsWith('/calculator')) {
     if (!user) return NextResponse.redirect(new URL('/login?redirect=' + pathname, request.url))
   }
 
-  // Protect admin routes
   if (pathname.startsWith('/admin')) {
     if (!user) return NextResponse.redirect(new URL('/login?redirect=/admin', request.url))
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-    if (profile?.role !== 'admin') {
-      return NextResponse.redirect(new URL('/dashboard?error=unauthorized', request.url))
-    }
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+    if (profile?.role !== 'admin') return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
-  // Login page — if already logged in, redirect based on role
   if (pathname === '/login' && user) {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', user.id)
-      .single()
-    if (profile?.role === 'admin') {
-      return NextResponse.redirect(new URL('/admin', request.url))
-    }
+    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
+    if (profile?.role === 'admin') return NextResponse.redirect(new URL('/admin', request.url))
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 
@@ -68,7 +50,5 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: [
-    '/((?!_next/static|_next/image|favicon.ico|api/).*)',
-  ],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|api/).*)'],
 }

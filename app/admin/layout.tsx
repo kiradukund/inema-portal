@@ -5,19 +5,19 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   await requireAdmin()
 
   const navItems = [
-    { href: '/admin',             icon: '📊', label: 'Dashboard' },
-    { href: '/admin/clients',     icon: '👥', label: 'Clients' },
-    { href: '/admin/loans',       icon: '💳', label: 'Loans' },
-    { href: '/admin/income',      icon: '💰', label: 'Income & P&L' },
-    { href: '/admin/reminders',   icon: '🔔', label: 'Reminders' },
-    { href: '/admin/expenses',    icon: '📋', label: 'Expenses' },
-    { href: '/admin/compliance',  icon: '⚖️',  label: 'Tax & BNR' },
-    { href: '/admin/upload',      icon: '📁', label: 'Upload Excel' },
+    { href: '/admin',                  icon: '📊', label: 'Dashboard' },
+    { href: '/admin/applications',     icon: '📋', label: 'Applications' },
+    { href: '/admin/clients',          icon: '👥', label: 'Clients' },
+    { href: '/admin/loans',            icon: '💳', label: 'Loans' },
+    { href: '/admin/income',           icon: '💰', label: 'Income & P&L' },
+    { href: '/admin/reminders',        icon: '🔔', label: 'Reminders' },
+    { href: '/admin/expenses',         icon: '📋', label: 'Expenses' },
+    { href: '/admin/compliance',       icon: '⚖️',  label: 'Tax & BNR' },
+    { href: '/admin/upload',           icon: '📁', label: 'Upload Excel' },
   ]
 
   return (
     <div className="min-h-screen flex bg-slate-50">
-      {/* Sidebar */}
       <aside className="w-60 bg-slate-900 flex flex-col flex-shrink-0">
         <div className="p-5 border-b border-slate-800">
           <p className="text-white font-bold font-serif text-base">INEMA</p>
@@ -43,11 +43,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           </form>
         </div>
       </aside>
-
-      {/* Main */}
-      <main className="flex-1 overflow-auto min-h-screen">
-        {children}
-      </main>
+      <main className="flex-1 overflow-auto min-h-screen">{children}</main>
     </div>
   )
 }

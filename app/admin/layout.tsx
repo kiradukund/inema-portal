@@ -1,26 +1,23 @@
-import { requireAdmin } from '@/lib/admin'
 import Link from 'next/link'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  await requireAdmin()
-
   const navItems = [
-    { href: '/admin',                  icon: '📊', label: 'Dashboard' },
-    { href: '/admin/applications',     icon: '📋', label: 'Applications' },
-    { href: '/admin/clients',          icon: '👥', label: 'Clients' },
-    { href: '/admin/loans',            icon: '💳', label: 'Loans' },
-    { href: '/admin/income',           icon: '💰', label: 'Income & P&L' },
-    { href: '/admin/reminders',        icon: '🔔', label: 'Reminders' },
-    { href: '/admin/expenses',         icon: '📋', label: 'Expenses' },
-    { href: '/admin/compliance',       icon: '⚖️',  label: 'Tax & BNR' },
-    { href: '/admin/upload',           icon: '📁', label: 'Upload Excel' },
+    { href: '/admin',               icon: '📊', label: 'Dashboard' },
+    { href: '/admin/applications',  icon: '📋', label: 'Applications' },
+    { href: '/admin/clients',       icon: '👥', label: 'Clients' },
+    { href: '/admin/loans',         icon: '💳', label: 'Loans' },
+    { href: '/admin/income',        icon: '💰', label: 'Income & P&L' },
+    { href: '/admin/reminders',     icon: '🔔', label: 'Reminders' },
+    { href: '/admin/expenses',      icon: '📋', label: 'Expenses' },
+    { href: '/admin/compliance',    icon: '⚖️',  label: 'Tax & BNR' },
+    { href: '/admin/upload',        icon: '📁', label: 'Upload Excel' },
   ]
 
   return (
     <div className="min-h-screen flex bg-slate-50">
       <aside className="w-60 bg-slate-900 flex flex-col flex-shrink-0">
         <div className="p-5 border-b border-slate-800">
-          <p className="text-white font-bold font-serif text-base">INEMA</p>
+          <p className="text-white font-bold text-base" style={{fontFamily:'Georgia,serif'}}>INEMA</p>
           <p className="text-amber-500 text-xs tracking-widest uppercase mt-0.5">Admin Portal</p>
         </div>
         <nav className="flex-1 p-3 space-y-0.5 overflow-y-auto">

@@ -6,11 +6,13 @@ export async function POST(req: NextRequest, context: any) {
   try {
     const admin = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      { auth: { autoRefreshToken: false, persistSession: false } }
     )
+
     const { data: app } = await admin
       .from('loan_applications')
-      .select('*, profiles(full_name, email, phone)')
+      .select('*, profiles!loan_applications_client_id_fkey(full_name, email, phone)')
       .eq('id', id)
       .single()
 
@@ -29,17 +31,26 @@ export async function POST(req: NextRequest, context: any) {
         .update({ status: 'approved', reviewed_at: new Date().toISOString() })
         .eq('id', id)
 
+      const profile = Array.isArray(app.profiles) ? app.profiles[0] : app.profiles
       await admin.from('imported_loans').insert({
-        client_name: (app.profiles as any)?.full_name ?? 'Portal Client',
-        principal, loan_type: app.loan_type ?? 'salary_advance',
-        term_months: months, date_offered: start, repayment_date: end,
-        total_due: totalDue, amount_paid: 0, outstanding: totalDue,
-        status: 'active', has_installments: months > 1, source: 'portal',
+        client_name: profile?.full_name ?? 'Portal Client',
+        principal,
+        loan_type: app.loan_type ?? 'salary_advance',
+        term_months: months,
+        date_offered: start,
+        repayment_date: end,
+        total_due: totalDue,
+        amount_paid: 0,
+        outstanding: totalDue,
+        status: 'active',
+        has_installments: months > 1,
+        source: 'portal',
       })
     }
+
     return NextResponse.redirect(new URL('/admin/applications', req.url))
   } catch (e) {
-    console.error(e)
+    console.error('Approve error:', e)
     return NextResponse.redirect(new URL('/admin/applications', req.url))
   }
 }

@@ -22,17 +22,16 @@ export default async function PortalLayout({ children }: { children: React.React
           <p className="text-white font-bold text-lg" style={{fontFamily:'Georgia,serif'}}>INEMA</p>
           <p className="text-amber-500 text-xs tracking-widest uppercase">Financial Solutions</p>
         </div>
-
         <div className="px-6 py-4 border-b border-slate-700">
           <p className="text-white font-semibold text-sm truncate">{profile?.full_name}</p>
           <p className="text-slate-400 text-xs mt-0.5 capitalize">{profile?.role ?? 'Client'}</p>
         </div>
-
         <nav className="flex-1 p-4 space-y-1">
           {[
             { href: '/dashboard',     label: 'Dashboard',      icon: '📊' },
             { href: '/loans',         label: 'My Loans',       icon: '💳' },
             { href: '/loans/apply',   label: 'Apply for Loan', icon: '📝' },
+            { href: '/documents',     label: 'Documents',      icon: '📁' },
             { href: '/calculator',    label: 'Calculator',     icon: '🧮' },
             { href: '/profile',       label: 'My Profile',     icon: '👤' },
           ].map(link => (
@@ -41,16 +40,13 @@ export default async function PortalLayout({ children }: { children: React.React
               <span>{link.icon}</span>{link.label}
             </Link>
           ))}
-
-          {/* Admin shortcut if user is admin */}
           {isAdmin && (
             <Link href="/admin"
-              className="flex items-center gap-3 px-4 py-2.5 rounded-lg text-amber-400 hover:bg-amber-900/30 hover:text-amber-300 transition-colors text-sm font-medium mt-4 border border-amber-700/30">
+              className="flex items-center gap-3 px-4 py-2.5 rounded-lg text-amber-400 hover:bg-amber-900/30 transition-colors text-sm font-medium mt-4 border border-amber-700/30">
               <span>⚙️</span>Admin Dashboard
             </Link>
           )}
         </nav>
-
         <div className="p-4 border-t border-slate-700">
           <form action="/api/auth/logout" method="POST">
             <button type="submit"
@@ -64,7 +60,6 @@ export default async function PortalLayout({ children }: { children: React.React
           </p>
         </div>
       </aside>
-
       <main className="flex-1 overflow-auto">{children}</main>
     </div>
   )

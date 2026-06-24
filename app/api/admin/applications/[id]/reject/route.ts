@@ -1,20 +1,29 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { NextRequest } from 'next/server'
+import { createServerSupabaseClient } from '@/lib/supabase'
+import { requireAdmin } from '@/lib/admin'
+import { ok, serverError, err } from '@/lib/api'
 
-export async function POST(req: NextRequest, context: any) {
-  const id = context.params.id
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    )
-    await admin.from('loan_applications')
-      .update({ status: 'rejected', reviewed_at: new Date().toISOString() })
-      .eq('id', id)
-    return NextResponse.redirect(new URL('/admin/applications', req.url))
-  } catch (e) {
-    console.error('Reject error:', e)
-    return NextResponse.redirect(new URL('/admin/applications', req.url))
-  }
+    await requireAdmin()
+    const { id } = await params
+    const supabase = await createServerSupabaseClient()
+    const body = await req.json().catch(() => ({}))
+    const review_notes = body.review_notes ?? 'Application not approved at this time.'
+
+    const { data: app } = await supabase.from('loan_applications').select('status').eq('id', id).single()
+    if (!app) return err('Application not found', 404)
+    if (app.status !== 'submitted') return err('Application already processed')
+
+    const { data: { user } } = await supabase.auth.getUser()
+    const { error } = await supabase.from('loan_applications').update({
+      status: 'rejected',
+      reviewed_by: user?.id,
+      reviewed_at: new Date().toISOString(),
+      review_notes,
+    }).eq('id', id)
+    if (error) return serverError(error)
+
+    return ok({ message: 'Application rejected.' })
+  } catch (e) { return serverError(e) }
 }

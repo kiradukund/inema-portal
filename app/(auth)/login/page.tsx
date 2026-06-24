@@ -1,104 +1,90 @@
 'use client'
 import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
+import { Suspense } from 'react'
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter()
-  const [form, setForm] = useState({ email: '', password: '' })
-  const [error, setError] = useState('')
+  const searchParams = useSearchParams()
+  const redirect = searchParams.get('redirect') ?? '/dashboard'
+  const resetSuccess = searchParams.get('reset') === 'success'
+
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
-
-    const res = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    })
-    const data = await res.json()
-    setLoading(false)
-
-    if (!data.success) { setError(data.error); return }
-
-    // Redirect admin to admin dashboard, clients to portal
-    if (data.data?.user?.role === 'admin') {
-      router.push('/admin')
-    } else {
-      router.push('/dashboard')
-    }
+  async function submit() {
+    if (!email || !password) { setError('Please enter your email and password'); return }
+    setLoading(true); setError('')
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+      const data = await res.json()
+      if (!data.success) { setError(data.error ?? 'Login failed'); setLoading(false); return }
+      router.push(redirect)
+      router.refresh()
+    } catch { setError('Something went wrong. Try again.'); setLoading(false) }
   }
 
   return (
-    <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-      <div className="w-full max-w-md">
-        {/* Logo */}
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
+      <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <h1 className="text-3xl font-bold text-white" style={{fontFamily:'Georgia,serif'}}>INEMA</h1>
-          <p className="text-amber-500 text-sm tracking-widest uppercase mt-1">Financial Solutions Ltd</p>
-          <p className="text-slate-400 text-sm mt-3">Sign in to your account</p>
+          <p className="text-slate-800 font-bold font-serif text-2xl">INEMA</p>
+          <p className="text-amber-600 text-xs tracking-widest uppercase mt-1">Financial Solutions Ltd</p>
+          <div className="flex gap-3 mt-4 justify-center text-xs text-slate-400">
+            <span>👤 Client Portal</span>
+            <span>·</span>
+            <span>⚙️ Admin Dashboard</span>
+          </div>
+          <p className="text-xs text-slate-400 mt-1">One login — you will be redirected automatically based on your access level</p>
         </div>
 
-        {/* Two portal options */}
-        <div className="grid grid-cols-2 gap-3 mb-6">
-          <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 text-center">
-            <p className="text-2xl mb-2">👤</p>
-            <p className="text-white font-semibold text-sm">Client Portal</p>
-            <p className="text-slate-400 text-xs mt-1">View loans & apply</p>
-          </div>
-          <div className="bg-amber-900/30 border border-amber-700/50 rounded-xl p-4 text-center">
-            <p className="text-2xl mb-2">⚙️</p>
-            <p className="text-amber-400 font-semibold text-sm">Admin Dashboard</p>
-            <p className="text-slate-400 text-xs mt-1">Manage business</p>
-          </div>
-        </div>
-        <p className="text-slate-500 text-xs text-center mb-6">One login — you will be redirected automatically based on your access level</p>
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8">
+          <h2 className="font-bold text-slate-800 mb-6 text-center">Sign In</h2>
 
-        <div className="bg-white rounded-2xl p-8 shadow-2xl">
-          <h2 className="text-xl font-bold text-slate-800 mb-6">Sign In</h2>
-
+          {resetSuccess && (
+            <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">
+              ✓ Password updated successfully. Please sign in.
+            </div>
+          )}
           {error && (
             <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Email Address</label>
-              <input type="email" placeholder="your@email.com"
-                className="w-full border border-slate-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-                value={form.email} onChange={e => setForm({ ...form, email: e.target.value })} required />
-            </div>
-            <div>
-              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Password</label>
-              <input type="password" placeholder="••••••••"
-                className="w-full border border-slate-200 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
-                value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} required />
-            </div>
-            <button type="submit" disabled={loading}
-              className="w-full bg-amber-600 hover:bg-amber-500 disabled:opacity-60 text-white font-semibold py-2.5 rounded-lg transition-colors mt-2">
-              {loading ? 'Signing in...' : 'Sign In →'}
-            </button>
-          </form>
+          <label className="label">Email Address</label>
+          <input type="email" className="input mb-4" placeholder="you@email.com"
+            value={email} onChange={e => setEmail(e.target.value)} />
 
-          <div className="mt-6 text-center space-y-2">
-            <p className="text-sm text-slate-500">
-              No account?{' '}
-              <Link href="/register" className="text-amber-600 font-semibold hover:underline">Register here</Link>
-            </p>
-            <p className="text-sm text-slate-400">
-              Need help?{' '}
-              <a href="https://wa.me/250788834132" target="_blank" className="text-amber-600 hover:underline">WhatsApp us</a>
-            </p>
+          <div className="flex items-center justify-between mb-1">
+            <label className="label mb-0">Password</label>
+            <Link href="/forgot-password" className="text-xs text-amber-600 hover:underline">Forgot password?</Link>
+          </div>
+          <input type="password" className="input mb-6" placeholder="Your password"
+            value={password} onChange={e => setPassword(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && submit()} />
+
+          <button className="btn-gold w-full" onClick={submit} disabled={loading}>
+            {loading ? 'Signing in...' : 'Sign In →'}
+          </button>
+
+          <div className="text-center mt-4 space-y-2">
+            <p className="text-sm text-slate-500">No account? <Link href="/register" className="text-amber-600 hover:underline">Register here</Link></p>
+            <p className="text-sm text-slate-500">Need help? <a href="https://wa.me/250788834132" className="text-amber-600 hover:underline">WhatsApp us</a></p>
           </div>
         </div>
 
-        <p className="text-center text-slate-500 text-xs mt-6">
-          Licensed by National Bank of Rwanda — Category III NDFSP
-        </p>
+        <p className="text-center text-xs text-slate-400 mt-6">Licensed by National Bank of Rwanda — Category III NDFSP</p>
       </div>
     </div>
   )
+}
+
+export default function LoginPage() {
+  return <Suspense><LoginForm /></Suspense>
 }

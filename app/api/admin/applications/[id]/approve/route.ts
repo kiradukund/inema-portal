@@ -1,56 +1,107 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { createClient } from '@supabase/supabase-js'
+import { NextRequest } from 'next/server'
+import { createServerSupabaseClient } from '@/lib/supabase'
+import { requireAdmin } from '@/lib/admin'
+import { ok, serverError, err } from '@/lib/api'
+import { calculateLoan } from '@/lib/calculator'
+import type { LoanType } from '@/types'
 
-export async function POST(req: NextRequest, context: any) {
-  const id = context.params.id
+export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const admin = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.SUPABASE_SERVICE_ROLE_KEY!,
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    )
+    await requireAdmin()
+    const { id } = await params
+    const supabase = await createServerSupabaseClient()
+    const body = await req.json().catch(() => ({}))
 
-    const { data: app } = await admin
-      .from('loan_applications')
-      .select('*, profiles!loan_applications_client_id_fkey(full_name, email, phone)')
-      .eq('id', id)
-      .single()
+    // Fetch application
+    const { data: app, error: fetchErr } = await supabase
+      .from('loan_applications').select('*').eq('id', id).single()
+    if (fetchErr || !app) return err('Application not found', 404)
+    if (app.status !== 'submitted') return err('Application already processed')
 
-    if (app) {
-      const principal = Number(app.requested_amount ?? 0)
-      const months = Number(app.requested_term_months ?? 1)
-      const interest = Math.round(principal * 0.05)
-      const fee = Math.round(principal * 0.04)
-      const vat = Math.round(fee * 0.18)
-      const m1 = interest + fee + vat
-      const totalDue = principal + m1 + (interest * (months - 1))
-      const start = new Date().toISOString().split('T')[0]
-      const end = new Date(Date.now() + months * 30 * 86400000).toISOString().split('T')[0]
+    const approved_amount = body.approved_amount ? Number(body.approved_amount) : Number(app.requested_amount)
+    const approved_term = body.approved_term_months ? Number(body.approved_term_months) : Number(app.requested_term_months)
+    const review_notes = body.review_notes ?? ''
 
-      await admin.from('loan_applications')
-        .update({ status: 'approved', reviewed_at: new Date().toISOString() })
-        .eq('id', id)
+    // Calculate repayment schedule
+    const calc = calculateLoan({ principal: approved_amount, term_months: approved_term, loan_type: app.loan_type as LoanType })
 
-      const profile = Array.isArray(app.profiles) ? app.profiles[0] : app.profiles
-      await admin.from('imported_loans').insert({
-        client_name: profile?.full_name ?? 'Portal Client',
-        principal,
-        loan_type: app.loan_type ?? 'salary_advance',
-        term_months: months,
-        date_offered: start,
-        repayment_date: end,
-        total_due: totalDue,
-        amount_paid: 0,
-        outstanding: totalDue,
-        status: 'active',
-        has_installments: months > 1,
-        source: 'portal',
-      })
-    }
+    // Get admin user
+    const { data: { user } } = await supabase.auth.getUser()
 
-    return NextResponse.redirect(new URL('/admin/applications', req.url))
-  } catch (e) {
-    console.error('Approve error:', e)
-    return NextResponse.redirect(new URL('/admin/applications', req.url))
-  }
+    // 1. Update application status
+    const { error: updateErr } = await supabase.from('loan_applications').update({
+      status: 'approved',
+      approved_amount,
+      approved_term_months: approved_term,
+      reviewed_by: user?.id,
+      reviewed_at: new Date().toISOString(),
+      review_notes,
+    }).eq('id', id)
+    if (updateErr) return serverError(updateErr)
+
+    // 2. Fetch client profile
+    const { data: profile } = await supabase.from('profiles').select('full_name, phone, employer_name').eq('id', app.client_id).single()
+    const clientName = profile?.full_name ?? 'Client'
+    const clientPhone = profile?.phone ?? ''
+
+    // 3. Count existing imported loans to get sequence number
+    const { count: loanCount } = await supabase.from('imported_loans').select('*', { count: 'exact', head: true })
+    const year = new Date().getFullYear()
+    const loanNumber = `LN-${year}-${String((loanCount ?? 0) + 1).padStart(4, '0')}`
+
+    const startDate = new Date()
+    const repayDate = new Date(startDate)
+    repayDate.setMonth(repayDate.getMonth() + approved_term)
+
+    // 4. Create imported_loan record
+    const { data: loan, error: loanErr } = await supabase.from('imported_loans').insert({
+      client_name: clientName,
+      principal: approved_amount,
+      loan_type: app.loan_type,
+      term_months: approved_term,
+      date_offered: startDate.toISOString().split('T')[0],
+      repayment_date: repayDate.toISOString().split('T')[0],
+      total_due: calc.total_repayment,
+      amount_paid: 0,
+      outstanding: calc.total_repayment,
+      status: 'active',
+      has_installments: true,
+      notes: `Portal application ${app.application_number}. ${review_notes}`,
+      source: 'portal',
+    }).select().single()
+    if (loanErr) return serverError(loanErr)
+
+    // 5. Create installment schedule
+    const installments = calc.schedule.map((s, i) => ({
+      loan_id: loan.id,
+      client_name: clientName,
+      num: i + 1,
+      amount: s.total_payment,
+      due_date: s.due_date,
+      status: 'not paid',
+      amount_paid: 0,
+    }))
+    await supabase.from('installments').insert(installments)
+
+    // 6. Create loans table entry for client portal view
+    await supabase.from('loans').insert({
+      client_id: app.client_id,
+      application_id: id,
+      loan_number: loanNumber,
+      loan_type: app.loan_type,
+      principal: approved_amount,
+      term_months: approved_term,
+      status: 'active',
+      disbursed_at: new Date().toISOString(),
+      total_repayment: calc.total_repayment,
+    }).select()
+
+    return ok({
+      message: `Loan approved for ${clientName}. RWF ${approved_amount.toLocaleString()} for ${approved_term} month(s).`,
+      loan_id: loan.id,
+      client_phone: clientPhone,
+      total_repayment: calc.total_repayment,
+      schedule: calc.schedule,
+    })
+  } catch (e) { return serverError(e) }
 }

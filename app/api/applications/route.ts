@@ -24,7 +24,7 @@ export async function POST(req: NextRequest) {
     if (authError || !user) return unauthorized()
 
     const body = await req.json()
-    const parsed = LoanApplicationSchema.safeParse(body)
+    const parsed = LoanApplicationSchema.strip().safeParse(body)
     if (!parsed.success) return err(parsed.error.issues[0]?.message ?? 'Validation error')
 
     const { loan_type, requested_amount, requested_term_months } = parsed.data
@@ -34,17 +34,14 @@ export async function POST(req: NextRequest) {
     if (requested_term_months > limits.maxMonths)
       return err(`Maximum term for ${loan_type} is ${limits.maxMonths} month(s)`)
 
-    // Block duplicate active loans
     const { data: activeLoans } = await supabase
       .from('loans').select('id').eq('client_id', user.id).in('status', ['active', 'disbursed'])
     if (activeLoans && activeLoans.length > 0)
       return err('You have an active loan. Complete repayment before applying again.', 409)
 
-    // Safe application_number — fallback to timestamp if count fails
     let application_number: string
     try {
-      const { count } = await supabase
-        .from('loan_applications').select('*', { count: 'exact', head: true })
+      const { count } = await supabase.from('loan_applications').select('*', { count: 'exact', head: true })
       application_number = generateApplicationNumber((count ?? 0) + 1)
     } catch {
       application_number = `INEMA-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`
@@ -52,13 +49,7 @@ export async function POST(req: NextRequest) {
 
     const { data: application, error: insertError } = await supabase
       .from('loan_applications')
-      .insert({
-        ...parsed.data,
-        client_id: user.id,
-        application_number,
-        status: 'submitted',
-        submitted_at: new Date().toISOString(),
-      })
+      .insert({ ...parsed.data, client_id: user.id, application_number, status: 'submitted', submitted_at: new Date().toISOString() })
       .select().single()
 
     if (insertError) return serverError(insertError)

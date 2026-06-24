@@ -17,13 +17,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     const { data: { user } } = await supabase.auth.getUser()
     const { error } = await supabase.from('loan_applications').update({
-      status: 'rejected',
-      reviewed_by: user?.id,
-      reviewed_at: new Date().toISOString(),
-      review_notes,
+      status: 'rejected', reviewed_by: user?.id, reviewed_at: new Date().toISOString(), review_notes,
     }).eq('id', id)
     if (error) return serverError(error)
-
     return ok({ message: 'Application rejected.' })
   } catch (e) { return serverError(e) }
 }

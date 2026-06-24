@@ -3,20 +3,18 @@ import Link from 'next/link'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   await requireAdmin()
-
   const navItems = [
-    { href: '/admin',                  icon: '📊', label: 'Dashboard' },
-    { href: '/admin/applications',     icon: '📥', label: 'Applications' },
-    { href: '/admin/clients',          icon: '👥', label: 'Clients' },
-    { href: '/admin/loans',            icon: '💳', label: 'Loans' },
-    { href: '/admin/income',           icon: '💰', label: 'Income & P&L' },
-    { href: '/admin/reminders',        icon: '🔔', label: 'Reminders' },
-    { href: '/admin/expenses',         icon: '📋', label: 'Expenses' },
-    { href: '/admin/compliance',       icon: '⚖️',  label: 'Tax & BNR' },
-    { href: '/admin/inquiries',        icon: '✉️',  label: 'Inquiries' },
-    { href: '/admin/upload',           icon: '📁', label: 'Upload Excel' },
+    { href: '/admin',               icon: '📊', label: 'Dashboard' },
+    { href: '/admin/applications',  icon: '📥', label: 'Applications' },
+    { href: '/admin/clients',       icon: '👥', label: 'Clients' },
+    { href: '/admin/loans',         icon: '💳', label: 'Loans' },
+    { href: '/admin/income',        icon: '💰', label: 'Income & P&L' },
+    { href: '/admin/reminders',     icon: '🔔', label: 'Reminders' },
+    { href: '/admin/expenses',      icon: '📋', label: 'Expenses' },
+    { href: '/admin/compliance',    icon: '⚖️',  label: 'Tax & BNR' },
+    { href: '/admin/inquiries',     icon: '✉️',  label: 'Inquiries' },
+    { href: '/admin/upload',        icon: '📁', label: 'Upload Excel' },
   ]
-
   return (
     <div className="min-h-screen flex bg-slate-50">
       <aside className="w-60 bg-slate-900 flex flex-col flex-shrink-0">
@@ -28,8 +26,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           {navItems.map(item => (
             <Link key={item.href} href={item.href}
               className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-sm font-medium">
-              <span className="text-base">{item.icon}</span>
-              {item.label}
+              <span className="text-base">{item.icon}</span>{item.label}
             </Link>
           ))}
         </nav>

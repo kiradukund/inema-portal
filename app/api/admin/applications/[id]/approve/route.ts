@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase'
 import { requireAdmin } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 import { calculateLoan } from '@/lib/calculator'
+import { sendLoanApproval } from '@/lib/email'
 import type { LoanType } from '@/types'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -23,17 +24,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const calc = calculateLoan({ principal: approved_amount, term_months: approved_term, loan_type: app.loan_type as LoanType })
     const { data: { user } } = await supabase.auth.getUser()
 
-    // 1. Update application status
     await supabase.from('loan_applications').update({
       status: 'approved', approved_amount, approved_term_months: approved_term,
       reviewed_by: user?.id, reviewed_at: new Date().toISOString(), review_notes,
     }).eq('id', id)
 
-    // 2. Fetch client profile
-    const { data: profile } = await supabase.from('profiles').select('full_name, phone').eq('id', app.client_id).single()
+    const { data: profile } = await supabase.from('profiles').select('full_name, phone, email').eq('id', app.client_id).single()
     const clientName = profile?.full_name ?? 'Client'
 
-    // 3. Create imported_loan record (for admin dashboard)
     const { count: loanCount } = await supabase.from('imported_loans').select('*', { count: 'exact', head: true })
     const loanNumber = `LN-${new Date().getFullYear()}-${String((loanCount ?? 0) + 1).padStart(4, '0')}`
     const startDate  = new Date()
@@ -48,7 +46,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       has_installments: true, notes: `Portal app ${app.application_number}. ${review_notes}`, source: 'portal',
     }).select().single()
 
-    // 4. Create installments (for admin view)
     if (importedLoan) {
       const installments = calc.schedule.map((s, i) => ({
         loan_id: importedLoan.id, client_name: clientName, num: i + 1,
@@ -57,45 +54,43 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await supabase.from('installments').insert(installments)
     }
 
-    // 5. Create loan record in loans table (for CLIENT portal)
     const { data: clientLoan, error: loanErr } = await supabase.from('loans').insert({
-      client_id:          app.client_id,
-      application_id:     id,
-      loan_number:        loanNumber,
-      loan_type:          app.loan_type,
-      principal:          approved_amount,
-      term_months:        approved_term,
-      status:             'active',
-      disbursed_at:       new Date().toISOString(),
-      total_repayment:    calc.total_repayment,
-      total_interest:     calc.total_interest,
-      upfront_fee_amount: calc.month1_fee,
-      vat_amount:         calc.month1_vat,
-      month1_payment:     calc.month1_total,
-      monthly_payment:    calc.subsequent_monthly,
+      client_id: app.client_id, application_id: id, loan_number: loanNumber,
+      loan_type: app.loan_type, principal: approved_amount, term_months: approved_term,
+      status: 'active', disbursed_at: new Date().toISOString(),
+      total_repayment: calc.total_repayment, total_interest: calc.total_interest,
+      upfront_fee_amount: calc.month1_fee, vat_amount: calc.month1_vat,
+      month1_payment: calc.month1_total, monthly_payment: calc.subsequent_monthly,
     }).select().single()
-
     if (loanErr) return serverError(loanErr)
 
-    // 6. Create repayment_schedules (for CLIENT portal repayment table)
     const repaymentSchedules = calc.schedule.map((s, i) => ({
-      loan_id:         clientLoan.id,
-      month_number:    i + 1,
-      due_date:        s.due_date,
-      interest_amount: s.interest,
-      fee_amount:      s.fee_amount,
-      total_due:       s.total_payment,
-      amount_paid:     0,
-      status:          'upcoming',
-      late_fee:        0,
+      loan_id: clientLoan.id, month_number: i + 1, due_date: s.due_date,
+      interest_amount: s.interest, fee_amount: s.fee_amount,
+      total_due: s.total_payment, amount_paid: 0, status: 'upcoming', late_fee: 0,
     }))
     const { error: schedErr } = await supabase.from('repayment_schedules').insert(repaymentSchedules)
     if (schedErr) return serverError(schedErr)
 
+    // Send approval email (non-blocking)
+    try {
+      const clientEmail = profile?.email ?? (await supabase.from('profiles').select('email').eq('id', app.client_id).single()).data?.email
+      if (clientEmail) {
+        await sendLoanApproval({
+          clientEmail, clientName, loanNumber,
+          loanType: app.loan_type, amount: approved_amount,
+          termMonths: approved_term, totalRepayment: calc.total_repayment,
+          month1Payment: calc.month1_total, monthlyPayment: calc.subsequent_monthly,
+          schedule: calc.schedule,
+        })
+      }
+    } catch (emailErr) {
+      console.error('Approval email failed (non-fatal):', emailErr)
+    }
+
     return ok({
       message: `Approved for ${clientName}. RWF ${approved_amount.toLocaleString()} / ${approved_term}mo.`,
-      loan_id: clientLoan.id,
-      client_phone: profile?.phone ?? '',
+      loan_id: clientLoan.id, client_phone: profile?.phone ?? '',
       total_repayment: calc.total_repayment,
     })
   } catch (e) { return serverError(e) }

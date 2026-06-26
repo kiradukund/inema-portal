@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase'
 import { LoanApplicationSchema } from '@/lib/validations'
 import { generateApplicationNumber, LOAN_LIMITS } from '@/lib/calculator'
 import { ok, err, unauthorized, serverError } from '@/lib/api'
+import { sendApplicationConfirmation } from '@/lib/email'
 
 export async function GET() {
   try {
@@ -53,6 +54,25 @@ export async function POST(req: NextRequest) {
       .select().single()
 
     if (insertError) return serverError(insertError)
+
+    // Send confirmation email (non-blocking)
+    try {
+      const { data: profile } = await supabase.from('profiles').select('full_name, email').eq('id', user.id).single()
+      const emailAddr = profile?.email ?? (await supabase.auth.getUser()).data.user?.email
+      if (emailAddr) {
+        await sendApplicationConfirmation({
+          clientEmail: emailAddr,
+          clientName: profile?.full_name ?? 'Client',
+          applicationNumber: application_number,
+          loanType: loan_type,
+          amount: requested_amount,
+          termMonths: requested_term_months,
+        })
+      }
+    } catch (emailErr) {
+      console.error('Email send failed (non-fatal):', emailErr)
+    }
+
     return ok({ message: 'Application submitted. Our team reviews within 24 hours.', application }, 201)
   } catch (e) { return serverError(e) }
 }

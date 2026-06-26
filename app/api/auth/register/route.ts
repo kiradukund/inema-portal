@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase'
 import { RegisterSchema } from '@/lib/validations'
 import { ok, err, serverError } from '@/lib/api'
+import { sendWelcomeEmail } from '@/lib/email'
 
 export async function POST(req: NextRequest) {
   try {
@@ -13,26 +14,17 @@ export async function POST(req: NextRequest) {
     const supabase = createAdminClient()
 
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: false,
+      email, password, email_confirm: false,
       user_metadata: { full_name, phone },
     })
 
     if (authError) {
-      if (authError.message.includes('already registered')) {
-        return err('An account with this email already exists.', 409)
-      }
+      if (authError.message.includes('already registered')) return err('An account with this email already exists.', 409)
       return err(authError.message)
     }
 
     const { error: profileError } = await supabase.from('profiles').insert({
-      id: authData.user.id,
-      full_name,
-      email,
-      phone,
-      role: 'client',
-      crb_consent: false,
+      id: authData.user.id, full_name, email, phone, role: 'client', crb_consent: false,
     })
 
     if (profileError) {
@@ -40,11 +32,10 @@ export async function POST(req: NextRequest) {
       return serverError(profileError)
     }
 
-    return ok({
-      message: 'Account created. Please check your email to verify, then sign in.',
-      user_id: authData.user.id,
-    }, 201)
-  } catch (e) {
-    return serverError(e)
-  }
+    try {
+      await sendWelcomeEmail({ clientEmail: email, clientName: full_name })
+    } catch (e) { console.error('Welcome email failed:', e) }
+
+    return ok({ message: 'Account created successfully. You can now sign in.', user_id: authData.user.id }, 201)
+  } catch (e) { return serverError(e) }
 }

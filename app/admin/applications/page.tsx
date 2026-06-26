@@ -19,7 +19,6 @@ export default async function AdminApplications() {
       <div className="p-8">
         <h1 className="text-2xl font-bold text-red-600 mb-4">Database Error</h1>
         <pre className="text-xs bg-red-50 p-4 rounded text-red-800 overflow-auto">{JSON.stringify(appsError, null, 2)}</pre>
-        <p className="text-sm text-slate-500 mt-4">Go to Supabase SQL Editor and run: <code>alter table loan_applications disable row level security;</code></p>
       </div>
     )
   }
@@ -40,7 +39,9 @@ export default async function AdminApplications() {
     salary_advance: 'Salary Advance', quinzaine: 'Quinzaine', school_fees: 'School Fees', business: 'Business'
   }
   const statusColor: Record<string, string> = {
-    submitted: 'bg-amber-100 text-amber-700', approved: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700',
+    submitted: 'bg-amber-100 text-amber-700',
+    approved:  'bg-green-100 text-green-700',
+    rejected:  'bg-red-100 text-red-700',
   }
 
   return (
@@ -70,7 +71,6 @@ export default async function AdminApplications() {
           <div className="text-center py-16">
             <p className="text-4xl mb-3">📋</p>
             <p className="text-slate-500 font-medium">No applications yet</p>
-            <p className="text-slate-400 text-sm mt-1">When clients apply through the portal they appear here.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -86,6 +86,7 @@ export default async function AdminApplications() {
                 {all.map((app: any) => {
                   const profile = profileMap[app.client_id] ?? {}
                   const docs = [app.has_id_copy,app.has_payslips,app.has_bank_statement,app.has_employment_letter,app.has_application_letter].filter(Boolean).length
+                  const showActions = app.status === 'submitted' || app.status === 'approved'
                   return (
                     <tr key={app.id} className="border-b border-slate-50 hover:bg-slate-50">
                       <td className="px-4 py-3 font-mono text-xs text-slate-500 whitespace-nowrap">{app.application_number}</td>
@@ -104,8 +105,8 @@ export default async function AdminApplications() {
                         <span className={`text-xs font-semibold px-2 py-1 rounded-full capitalize ${statusColor[app.status] ?? 'bg-slate-100 text-slate-600'}`}>{app.status}</span>
                       </td>
                       <td className="px-4 py-3">
-                        {app.status === 'submitted'
-                          ? <ApplicationActions id={app.id} clientName={profile.full_name ?? 'Client'} clientPhone={profile.phone ?? ''} amount={app.requested_amount} term={app.requested_term_months} />
+                        {showActions
+                          ? <ApplicationActions id={app.id} clientName={profile.full_name ?? 'Client'} clientPhone={profile.phone ?? ''} amount={app.requested_amount} term={app.requested_term_months} status={app.status} />
                           : <span className="text-xs text-slate-400">{app.review_notes?.slice(0,40) || 'Processed'}</span>}
                       </td>
                     </tr>

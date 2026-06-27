@@ -3,6 +3,7 @@ import { Resend } from 'resend'
 const resend = new Resend(process.env.RESEND_API_KEY)
 
 const FROM = 'INEMA Financial Solutions <onboarding@resend.dev>'
+const ADMIN_EMAIL = 'iradukundacyusakevin@gmail.com'
 const SUPPORT_PHONE = '+250 788 834 132'
 const PORTAL_URL = 'https://inema-portal-t9a3.vercel.app'
 
@@ -23,7 +24,7 @@ export async function sendApplicationConfirmation({
   }
   await resend.emails.send({
     from: FROM,
-    to: clientEmail,
+    to: [clientEmail, ADMIN_EMAIL].filter((v, i, a) => a.indexOf(v) === i),
     subject: `Application Received — ${applicationNumber}`,
     html: `
       <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#fff;">
@@ -77,7 +78,7 @@ export async function sendLoanApproval({
 
   await resend.emails.send({
     from: FROM,
-    to: clientEmail,
+    to: [clientEmail, ADMIN_EMAIL].filter((v, i, a) => a.indexOf(v) === i),
     subject: `🎉 Loan Approved — ${formatRWF(amount)} | ${loanNumber}`,
     html: `
       <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#fff;">
@@ -137,7 +138,7 @@ export async function sendLoanRejection({
   }
   await resend.emails.send({
     from: FROM,
-    to: clientEmail,
+    to: [clientEmail, ADMIN_EMAIL].filter((v, i, a) => a.indexOf(v) === i),
     subject: `Update on Your Loan Application — ${applicationNumber}`,
     html: `
       <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;background:#fff;">

@@ -55,18 +55,21 @@ export default async function DashboardPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-        <div className="card border-l-4 border-l-amber-500">
+        <Link href="/loans" className="card border-l-4 border-l-amber-500 hover:border-amber-400 hover:shadow-md transition-all cursor-pointer">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Active Loans</p>
           <p className="text-3xl font-bold text-slate-800 mt-1">{activeLoans.length}</p>
-        </div>
-        <div className="card border-l-4 border-l-blue-500">
+          <p className="text-xs text-amber-600 mt-1">View all →</p>
+        </Link>
+        <Link href="/loans" className="card border-l-4 border-l-blue-500 hover:border-blue-400 hover:shadow-md transition-all cursor-pointer">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Borrowed</p>
           <p className="text-2xl font-bold text-slate-800 mt-1">{formatRWF(totalBorrowed)}</p>
-        </div>
-        <div className="card border-l-4 border-l-red-400">
+          <p className="text-xs text-blue-600 mt-1">View history →</p>
+        </Link>
+        <Link href="/loans" className="card border-l-4 border-l-red-400 hover:border-red-300 hover:shadow-md transition-all cursor-pointer">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount Owed</p>
           <p className="text-2xl font-bold text-slate-800 mt-1">{formatRWF(totalOwed)}</p>
-        </div>
+          <p className="text-xs text-red-500 mt-1">View schedule →</p>
+        </Link>
       </div>
 
       {/* Profile completeness warning */}
@@ -84,7 +87,10 @@ export default async function DashboardPage() {
         {/* Active loans */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-bold text-slate-800">Active Loans</h2>
+            <div className="flex items-center justify-between">
+              <h2 className="font-bold text-slate-800">Active Loans</h2>
+              <Link href="/loans" className="text-sm text-amber-600 hover:underline font-semibold">View all →</Link>
+            </div>
             <Link href="/loans" className="text-amber-600 text-sm hover:underline">View all</Link>
           </div>
           {activeLoans.length === 0 ? (
@@ -137,7 +143,7 @@ export default async function DashboardPage() {
           ) : (
             <div className="space-y-3">
               {applications.map(app => (
-                <div key={app.id} className="p-4 border border-slate-100 rounded-xl">
+                <Link key={app.id} href="/loans" className="block p-4 border border-slate-100 rounded-xl hover:border-amber-200 hover:bg-amber-50 transition-all">
                   <div className="flex justify-between items-start">
                     <div>
                       <p className="font-semibold text-slate-700 text-sm capitalize">
@@ -149,7 +155,7 @@ export default async function DashboardPage() {
                   </div>
                   <p className="text-sm font-semibold text-slate-800 mt-2">{formatRWF(app.requested_amount)}</p>
                   <p className="text-xs text-slate-400">{app.requested_term_months} month(s)</p>
-                </div>
+                </Link>
               ))}
             </div>
           )}

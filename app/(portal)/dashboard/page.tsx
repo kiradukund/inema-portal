@@ -55,17 +55,17 @@ export default async function DashboardPage() {
 
       {/* Stats */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-        <Link href="/loans" className="card border-l-4 border-l-amber-500 hover:border-amber-400 hover:shadow-md transition-all cursor-pointer">
+        <Link href="/loans" className="card border-l-4 border-l-amber-500 hover:shadow-md hover:border-amber-400 transition-all">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Active Loans</p>
           <p className="text-3xl font-bold text-slate-800 mt-1">{activeLoans.length}</p>
           <p className="text-xs text-amber-600 mt-1">View all →</p>
         </Link>
-        <Link href="/loans" className="card border-l-4 border-l-blue-500 hover:border-blue-400 hover:shadow-md transition-all cursor-pointer">
+        <Link href="/loans" className="card border-l-4 border-l-blue-500 hover:shadow-md hover:border-blue-400 transition-all">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Total Borrowed</p>
           <p className="text-2xl font-bold text-slate-800 mt-1">{formatRWF(totalBorrowed)}</p>
           <p className="text-xs text-blue-600 mt-1">View history →</p>
         </Link>
-        <Link href="/loans" className="card border-l-4 border-l-red-400 hover:border-red-300 hover:shadow-md transition-all cursor-pointer">
+        <Link href="/loans" className="card border-l-4 border-l-red-400 hover:shadow-md hover:border-red-300 transition-all">
           <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount Owed</p>
           <p className="text-2xl font-bold text-slate-800 mt-1">{formatRWF(totalOwed)}</p>
           <p className="text-xs text-red-500 mt-1">View schedule →</p>
@@ -87,10 +87,7 @@ export default async function DashboardPage() {
         {/* Active loans */}
         <div className="card">
           <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center justify-between">
-              <h2 className="font-bold text-slate-800">Active Loans</h2>
-              <Link href="/loans" className="text-sm text-amber-600 hover:underline font-semibold">View all →</Link>
-            </div>
+            <h2 className="font-bold text-slate-800">Active Loans</h2>
             <Link href="/loans" className="text-amber-600 text-sm hover:underline">View all</Link>
           </div>
           {activeLoans.length === 0 ? (

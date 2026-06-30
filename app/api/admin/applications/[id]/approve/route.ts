@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from '@/lib/supabase'
 import { requireAdmin } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 import { calculateLoan } from '@/lib/calculator'
+import { sendLoanApproval } from '@/lib/email'
 import type { LoanType } from '@/types'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -53,7 +54,6 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       await supabase.from('installments').insert(installments)
     }
 
-    // FIX: include all NOT NULL rate columns the loans table requires
     const { data: clientLoan, error: loanErr } = await supabase.from('loans').insert({
       client_id: app.client_id,
       application_id: id,
@@ -78,25 +78,34 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     if (loanErr) return serverError(loanErr)
 
+    // FIX: repayment_schedules also requires client_id (NOT NULL)
     const repaymentSchedules = calc.schedule.map((s: any, i: number) => ({
-      loan_id: clientLoan.id, month_number: i + 1, due_date: s.due_date,
-      interest_amount: s.interest, fee_amount: s.fee_amount,
-      total_due: s.total_payment, amount_paid: 0, status: 'upcoming', late_fee: 0,
+      loan_id: clientLoan.id,
+      client_id: app.client_id,
+      month_number: i + 1,
+      due_date: s.due_date,
+      interest_amount: s.interest,
+      fee_amount: s.fee_amount,
+      total_due: s.total_payment,
+      amount_paid: 0,
+      status: 'upcoming',
+      late_fee: 0,
     }))
     const { error: schedErr } = await supabase.from('repayment_schedules').insert(repaymentSchedules)
     if (schedErr) return serverError(schedErr)
 
     try {
       if (profile?.email) {
-        const { sendLoanApproval } = await import('@/lib/email')
         await sendLoanApproval({
           clientEmail: profile.email, clientName, loanNumber,
           loanType: app.loan_type, amount: approved_amount, termMonths: approved_term,
           totalRepayment: calc.total_repayment, month1Payment: calc.month1_total,
           monthlyPayment: calc.subsequent_monthly, schedule: calc.schedule,
         })
+      } else {
+        console.error('No client email for approval notification, client_id:', app.client_id)
       }
-    } catch (e) { console.error('Approval email failed:', e) }
+    } catch (e) { console.error('Approval email failed (non-fatal):', e) }
 
     return ok({
       message: `Approved for ${clientName}. RWF ${approved_amount.toLocaleString()} / ${approved_term}mo.`,

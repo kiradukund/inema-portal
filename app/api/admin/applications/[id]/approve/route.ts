@@ -3,7 +3,6 @@ import { createServerSupabaseClient } from '@/lib/supabase'
 import { requireAdmin } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 import { calculateLoan } from '@/lib/calculator'
-import { sendLoanApproval } from '@/lib/email'
 import type { LoanType } from '@/types'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -47,24 +46,39 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }).select().single()
 
     if (importedLoan) {
-      const installments = calc.schedule.map((s, i) => ({
+      const installments = calc.schedule.map((s: any, i: number) => ({
         loan_id: importedLoan.id, client_name: clientName, num: i + 1,
         amount: s.total_payment, due_date: s.due_date, status: 'not paid', amount_paid: 0,
       }))
       await supabase.from('installments').insert(installments)
     }
 
+    // FIX: include all NOT NULL rate columns the loans table requires
     const { data: clientLoan, error: loanErr } = await supabase.from('loans').insert({
-      client_id: app.client_id, application_id: id, loan_number: loanNumber,
-      loan_type: app.loan_type, principal: approved_amount, term_months: approved_term,
-      status: 'active', disbursed_at: new Date().toISOString(),
-      total_repayment: calc.total_repayment, total_interest: calc.total_interest,
-      upfront_fee_amount: calc.month1_fee, vat_amount: calc.month1_vat,
-      month1_payment: calc.month1_total, monthly_payment: calc.subsequent_monthly,
+      client_id: app.client_id,
+      application_id: id,
+      loan_number: loanNumber,
+      loan_type: app.loan_type,
+      principal: approved_amount,
+      term_months: approved_term,
+      monthly_interest_rate: 0.05,
+      upfront_fee_rate: 0.04,
+      vat_rate: 0.18,
+      late_payment_rate: 0.05,
+      upfront_fee_amount: calc.month1_fee,
+      vat_amount: calc.month1_vat,
+      total_interest: calc.total_interest,
+      total_repayment: calc.total_repayment,
+      month1_payment: calc.month1_total,
+      monthly_payment: calc.subsequent_monthly,
+      status: 'active',
+      disbursed_at: new Date().toISOString(),
+      due_date: repayDate.toISOString(),
     }).select().single()
+
     if (loanErr) return serverError(loanErr)
 
-    const repaymentSchedules = calc.schedule.map((s, i) => ({
+    const repaymentSchedules = calc.schedule.map((s: any, i: number) => ({
       loan_id: clientLoan.id, month_number: i + 1, due_date: s.due_date,
       interest_amount: s.interest, fee_amount: s.fee_amount,
       total_due: s.total_payment, amount_paid: 0, status: 'upcoming', late_fee: 0,
@@ -72,26 +86,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { error: schedErr } = await supabase.from('repayment_schedules').insert(repaymentSchedules)
     if (schedErr) return serverError(schedErr)
 
-    // Send approval email (non-blocking)
     try {
-      const clientEmail = profile?.email ?? (await supabase.from('profiles').select('email').eq('id', app.client_id).single()).data?.email
-      if (clientEmail) {
+      if (profile?.email) {
+        const { sendLoanApproval } = await import('@/lib/email')
         await sendLoanApproval({
-          clientEmail, clientName, loanNumber,
-          loanType: app.loan_type, amount: approved_amount,
-          termMonths: approved_term, totalRepayment: calc.total_repayment,
-          month1Payment: calc.month1_total, monthlyPayment: calc.subsequent_monthly,
-          schedule: calc.schedule,
+          clientEmail: profile.email, clientName, loanNumber,
+          loanType: app.loan_type, amount: approved_amount, termMonths: approved_term,
+          totalRepayment: calc.total_repayment, month1Payment: calc.month1_total,
+          monthlyPayment: calc.subsequent_monthly, schedule: calc.schedule,
         })
       }
-    } catch (emailErr) {
-      console.error('Approval email failed (non-fatal):', emailErr)
-    }
+    } catch (e) { console.error('Approval email failed:', e) }
 
     return ok({
       message: `Approved for ${clientName}. RWF ${approved_amount.toLocaleString()} / ${approved_term}mo.`,
-      loan_id: clientLoan.id, client_phone: profile?.phone ?? '',
-      total_repayment: calc.total_repayment,
+      loan_id: clientLoan.id, client_phone: profile?.phone ?? '', total_repayment: calc.total_repayment,
     })
   } catch (e) { return serverError(e) }
 }

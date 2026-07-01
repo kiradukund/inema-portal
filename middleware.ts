@@ -1,45 +1,7 @@
 import { createServerClient, type CookieOptions } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
-import { loginRatelimit, registerRatelimit, applicationRatelimit, contactRatelimit, getClientIp } from '@/lib/ratelimit'
 
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl
-
-  // ── Rate limiting for sensitive endpoints ──────────────────────────────────
-  if (request.method === 'POST') {
-    const ip = getClientIp(request)
-    let limiter = null
-    let limitName = ''
-
-    if (pathname === '/api/auth/login') { limiter = loginRatelimit; limitName = 'login' }
-    else if (pathname === '/api/auth/register') { limiter = registerRatelimit; limitName = 'register' }
-    else if (pathname === '/api/applications') { limiter = applicationRatelimit; limitName = 'application' }
-    else if (pathname === '/api/contact') { limiter = contactRatelimit; limitName = 'contact' }
-
-    if (limiter) {
-      const { success, limit, remaining, reset } = await limiter.limit(ip)
-      if (!success) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Too many requests. Please try again in a moment.`,
-            data: null,
-          },
-          {
-            status: 429,
-            headers: {
-              'X-RateLimit-Limit': limit.toString(),
-              'X-RateLimit-Remaining': remaining.toString(),
-              'X-RateLimit-Reset': reset.toString(),
-              'Retry-After': Math.ceil((reset - Date.now()) / 1000).toString(),
-            },
-          }
-        )
-      }
-    }
-  }
-
-  // ── Existing auth/redirect logic ────────────────────────────────────────────
   let response = NextResponse.next({ request: { headers: request.headers } })
 
   const supabase = createServerClient(
@@ -63,6 +25,7 @@ export async function middleware(request: NextRequest) {
   )
 
   const { data: { user } } = await supabase.auth.getUser()
+  const { pathname } = request.nextUrl
 
   if (pathname === '/') return response
 

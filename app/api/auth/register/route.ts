@@ -3,8 +3,14 @@ import { createAdminClient } from '@/lib/supabase'
 import { RegisterSchema } from '@/lib/validations'
 import { ok, err, serverError } from '@/lib/api'
 import { sendWelcomeEmail } from '@/lib/email'
+import { checkRegisterLimit, getClientIp, rateLimitResponse } from '@/lib/ratelimit'
 
 export async function POST(req: NextRequest) {
+  // Rate limit: 3 registrations per hour per IP
+  const ip = getClientIp(req)
+  const { success } = checkRegisterLimit(ip)
+  if (!success) return rateLimitResponse()
+
   try {
     const body = await req.json()
     const parsed = RegisterSchema.safeParse(body)
@@ -32,9 +38,8 @@ export async function POST(req: NextRequest) {
       return serverError(profileError)
     }
 
-    try {
-      await sendWelcomeEmail({ clientEmail: email, clientName: full_name })
-    } catch (e) { console.error('Welcome email failed:', e) }
+    try { await sendWelcomeEmail({ clientEmail: email, clientName: full_name }) }
+    catch (e) { console.error('Welcome email failed:', e) }
 
     return ok({ message: 'Account created successfully. You can now sign in.', user_id: authData.user.id }, 201)
   } catch (e) { return serverError(e) }

@@ -1,55 +1,55 @@
-import { Ratelimit } from '@upstash/ratelimit'
-import { Redis } from '@upstash/redis'
+// Simple in-memory rate limiter for Vercel serverless functions
+// Each function instance has its own store — this is sufficient for INEMA's scale
+// For high traffic (10k+ req/min), upgrade to Upstash Redis
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-})
+const store = new Map<string, { count: number; resetAt: number }>()
 
-// Login: 5 attempts per 60 seconds per IP — stops brute-force password guessing
-export const loginRatelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(5, '60 s'),
-  analytics: true,
-  prefix: 'ratelimit:login',
-})
+function rateLimit(key: string, limit: number, windowMs: number): { success: boolean; remaining: number } {
+  const now = Date.now()
+  const record = store.get(key)
 
-// Register: 3 accounts per hour per IP — stops fake account spam
-export const registerRatelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(3, '3600 s'),
-  analytics: true,
-  prefix: 'ratelimit:register',
-})
+  if (!record || now > record.resetAt) {
+    store.set(key, { count: 1, resetAt: now + windowMs })
+    return { success: true, remaining: limit - 1 }
+  }
 
-// Loan applications: 5 per hour per IP — stops application spam
-export const applicationRatelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(5, '3600 s'),
-  analytics: true,
-  prefix: 'ratelimit:application',
-})
+  if (record.count >= limit) {
+    return { success: false, remaining: 0 }
+  }
 
-// Contact form: 3 per hour per IP — stops message spam
-export const contactRatelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(3, '3600 s'),
-  analytics: true,
-  prefix: 'ratelimit:contact',
-})
-
-// Generic API: 30 requests per 10 seconds per IP — general abuse protection
-export const generalRatelimit = new Ratelimit({
-  redis,
-  limiter: Ratelimit.slidingWindow(30, '10 s'),
-  analytics: true,
-  prefix: 'ratelimit:general',
-})
+  record.count++
+  return { success: true, remaining: limit - record.count }
+}
 
 export function getClientIp(req: Request): string {
   const forwarded = req.headers.get('x-forwarded-for')
   if (forwarded) return forwarded.split(',')[0].trim()
-  const realIp = req.headers.get('x-real-ip')
-  if (realIp) return realIp
-  return '127.0.0.1'
+  return req.headers.get('x-real-ip') ?? '127.0.0.1'
+}
+
+export function checkLoginLimit(ip: string) {
+  // 5 attempts per 60 seconds
+  return rateLimit(`login:${ip}`, 5, 60_000)
+}
+
+export function checkRegisterLimit(ip: string) {
+  // 3 registrations per hour
+  return rateLimit(`register:${ip}`, 3, 3_600_000)
+}
+
+export function checkApplicationLimit(ip: string) {
+  // 5 applications per hour
+  return rateLimit(`application:${ip}`, 5, 3_600_000)
+}
+
+export function checkContactLimit(ip: string) {
+  // 3 messages per hour
+  return rateLimit(`contact:${ip}`, 3, 3_600_000)
+}
+
+export function rateLimitResponse() {
+  return Response.json(
+    { success: false, error: 'Too many requests. Please try again later.', data: null },
+    { status: 429, headers: { 'Retry-After': '60' } }
+  )
 }

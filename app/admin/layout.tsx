@@ -18,6 +18,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const iacmItems = [
     { href: '/admin/iacm',              icon: '🏦', label: 'IACM Home' },
+    { href: '/admin/iacm/boss',         icon: '👔', label: 'Boss Dashboard' },
     { href: '/admin/iacm/loans',        icon: '📋', label: 'Loan Portfolio' },
     { href: '/admin/iacm/loans/new',    icon: '➕', label: 'New Loan' },
     { href: '/admin/iacm/payments/new', icon: '💵', label: 'Record Payment' },

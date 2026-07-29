@@ -59,17 +59,15 @@ export default function BNRReportPage() {
         </div>
 
         <div className="bg-slate-50 rounded-lg p-4">
-          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">What's included in the Excel file</p>
+          <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">Auto-filled from your data</p>
           <div className="space-y-1.5">
             {[
-              ['Cover Page', 'Institution details, reporting period, contact info'],
-              ['A1.2 Balance Sheet', 'Assets, liabilities and equity — auto-calculated from your data'],
-              ['A1.3 Normal Loans', 'Loans with 0 days overdue — all 21 clients with full details'],
-              ['A1.4 Watch (1-89 days)', 'Loans 1-89 days past maturity — auto-classified'],
-              ['A1.5 Substandard (90-179)', 'Loans 90-179 days past maturity'],
-              ['A1.6 Doubtful (180-359)', 'Loans 180-359 days past maturity'],
-              ['A1.7 Loss (360+ days)', 'Loans 360+ days past maturity'],
-              ['A1.8 Income Statement', 'Revenue and expenses — auto-populated from recorded data'],
+              ['A1.2. FS', 'Gross loans, loan classification totals, income/expenses, gender & sector breakdowns for the selected quarter\'s column'],
+              ['A1.3. Normal Loans', 'Loans with 0 days overdue, full BNR borrower detail'],
+              ['A1.4. Watch (1-89 days)', 'Loans 1-89 days past maturity — auto-classified'],
+              ['A1.5. Substandard (90-179)', 'Loans 90-179 days past maturity'],
+              ['A1.6. Doubtful (180-359)', 'Loans 180-359 days past maturity'],
+              ['A1.7. Loss (360+ days)', 'Loans 360+ days past maturity'],
             ].map(([sheet, desc]) => (
               <div key={sheet} className="flex items-start gap-2">
                 <span className="text-green-500 text-xs mt-0.5">✓</span>
@@ -81,12 +79,19 @@ export default function BNRReportPage() {
         </div>
 
         <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-          <p className="text-xs font-bold text-amber-700 mb-2">⚠️ Before Downloading</p>
+          <p className="text-xs font-bold text-amber-700 mb-2">⚠️ Still needs manual entry before sending to BNR</p>
           <ul className="text-xs text-amber-700 space-y-1">
-            <li>• Ensure all loan payments for the quarter are recorded</li>
-            <li>• Ensure all expenses for the quarter are recorded</li>
-            <li>• Update the BNR registration number in the Cover sheet before sending</li>
-            <li>• Devotha should review all figures before emailing to BNR</li>
+            {[
+              'Cash-in-vault vs cash-at-bank split, fixed assets/depreciation, borrowings, share capital & retained earnings movements',
+              'Income tax, donations and dividend lines',
+              'Staff, board member and shareholder counts',
+              'SME and Youth-entity loan statistics',
+              'New loan applications and rejections',
+              'Ratios: NPL ratio, Capital Adequacy Ratio, ROA, ROE, cost-to-income',
+              'Restructured loans and written-off loans sheets',
+              '"Relationship with the NDFSP" and "Branch name" on loan sheets are defaulted (none / single office) — confirm before sending',
+              'Ensure all loan payments and expenses for the quarter are recorded first',
+            ].map(item => <li key={item}>• {item}</li>)}
           </ul>
         </div>
 

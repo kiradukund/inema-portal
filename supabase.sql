@@ -453,3 +453,142 @@ insert into compliance_deadlines (title, description, deadline_date, category, i
 ('CIT Quarterly Prepayment Q3', 'Quarterly income tax prepayment to RRA', '2026-09-30', 'tax', true, 'quarterly'),
 ('BNR Q3 Report', 'BNR Quarterly Supervisory Report (Jul-Sep 2026)', '2026-10-30', 'bnr', true, 'quarterly')
 on conflict do nothing;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- IACM — INTERNAL ACCOUNTING & COMPLIANCE MODULE
+-- These tables back app/admin/iacm/* and were originally created directly in
+-- the Supabase dashboard — documented here so the schema lives in source
+-- control. Superseded the older imported_clients/imported_loans/expenses
+-- tables above for BNR reporting purposes; those are left in place since
+-- other admin pages may still read them.
+-- ═══════════════════════════════════════════════════════════════════════════
+
+-- ─── IACM CLIENTS ─────────────────────────────────────────────────────────
+create table if not exists iacm_clients (
+  id                    uuid primary key default uuid_generate_v4(),
+  full_name             text not null,
+  national_id           text unique not null,
+  phone                 text,
+  gender                text check (gender in ('male', 'female')),
+  age                   int,
+  marital_status        text,
+  district              text,
+  sector                text,
+  cell                  text,
+  village               text,
+  previous_loans_paid   text default 'not_applicable' check (previous_loans_paid in ('yes', 'no', 'not_applicable')),
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+
+-- ─── IACM LOANS ───────────────────────────────────────────────────────────
+create table if not exists iacm_loans (
+  id                         uuid primary key default uuid_generate_v4(),
+  client_id                  uuid not null references iacm_clients(id) on delete cascade,
+  loan_number                 text unique not null,
+  loan_type                   text,
+  disbursed_amount            numeric(15,2) not null,
+  disbursement_date           date not null,
+  maturity_date               date not null,
+  interest_rate               numeric(6,4) not null default 0.05,  -- monthly rate, e.g. 0.05 = 5%/month
+  interest_method             text default 'flat' check (interest_method in ('flat', 'declining')),
+  repayment_frequency_days    int not null default 30,
+  grace_period_days           int default 0,
+  first_payment_date          date,
+  last_payment_date           date,
+  collateral_type             text,
+  collateral_amount           numeric(15,2) default 0,
+  purpose                     text,
+  economic_sector             text,
+  loan_officer                text,
+  balance_outstanding         numeric(15,2) not null default 0,
+  principal_repaid            numeric(15,2) not null default 0,
+  installments_paid           int default 0,
+  installments_outstanding    int,
+  status                      text default 'active' check (status in ('active', 'completed')),
+  created_at                  timestamptz not null default now(),
+  updated_at                  timestamptz not null default now()
+);
+
+-- ─── IACM PAYMENTS ────────────────────────────────────────────────────────
+create table if not exists iacm_payments (
+  id                 uuid primary key default uuid_generate_v4(),
+  loan_id            uuid not null references iacm_loans(id) on delete cascade,
+  payment_date       date not null,
+  total_amount       numeric(15,2) not null,
+  interest_portion   numeric(15,2) not null default 0,
+  principal_portion  numeric(15,2) not null default 0,
+  fee_portion        numeric(15,2) not null default 0,
+  payment_method     text default 'bank_transfer',
+  notes              text,
+  created_at         timestamptz not null default now()
+);
+
+-- ─── IACM EXPENSES ────────────────────────────────────────────────────────
+create table if not exists iacm_expenses (
+  id              uuid primary key default uuid_generate_v4(),
+  expense_date    date not null,
+  category        text not null,
+  description     text not null,
+  amount          numeric(15,2) not null,
+  payment_method  text default 'bank_transfer',
+  created_at      timestamptz not null default now()
+);
+
+-- ─── IACM OPENING BALANCES ────────────────────────────────────────────────
+-- One-off snapshot balances (cash, fixed assets, payables, capital, etc.) used
+-- as a starting point before iacm_journal_entries below tracked movements.
+create table if not exists iacm_opening_balances (
+  id             uuid primary key default uuid_generate_v4(),
+  account_code   text not null,
+  account_name   text,
+  debit_balance  numeric(15,2) not null default 0,
+  credit_balance numeric(15,2) not null default 0,
+  as_of_date     date,
+  created_at     timestamptz not null default now()
+);
+
+-- ─── IACM JOURNAL ENTRIES ─────────────────────────────────────────────────
+-- Movement ledger on top of iacm_opening_balances for non-loan balance sheet
+-- accounts (cash, fixed assets, payables, equity, borrowings). Loan/interest
+-- figures stay derived from iacm_loans/iacm_payments — this table intentionally
+-- does not duplicate them. Each transaction is 2+ rows sharing a reference,
+-- with total debits = total credits enforced at the application layer.
+create table if not exists iacm_journal_entries (
+  id            uuid primary key default uuid_generate_v4(),
+  entry_date    date not null,
+  account_code  text not null,
+  account_name  text not null,
+  debit         numeric(15,2) not null default 0,
+  credit        numeric(15,2) not null default 0,
+  description   text not null,
+  reference     text,
+  created_by    uuid references profiles(id),
+  created_at    timestamptz not null default now()
+);
+
+-- ─── RLS FOR IACM TABLES ──────────────────────────────────────────────────
+alter table iacm_clients enable row level security;
+alter table iacm_loans enable row level security;
+alter table iacm_payments enable row level security;
+alter table iacm_expenses enable row level security;
+alter table iacm_opening_balances enable row level security;
+alter table iacm_journal_entries enable row level security;
+
+create policy "admin_only_iacm_clients" on iacm_clients
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create policy "admin_only_iacm_loans" on iacm_loans
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create policy "admin_only_iacm_payments" on iacm_payments
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create policy "admin_only_iacm_expenses" on iacm_expenses
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create policy "admin_only_iacm_opening_balances" on iacm_opening_balances
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create policy "admin_only_iacm_journal_entries" on iacm_journal_entries
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+
+-- ─── IACM INDEXES ─────────────────────────────────────────────────────────
+create index if not exists idx_iacm_loans_client_id on iacm_loans(client_id);
+create index if not exists idx_iacm_payments_loan_id on iacm_payments(loan_id);
+create index if not exists idx_iacm_journal_entries_account_date on iacm_journal_entries(account_code, entry_date);

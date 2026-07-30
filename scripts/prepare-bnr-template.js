@@ -63,6 +63,19 @@ async function main() {
     }
   }
 
+  // [Content_Types].xml still declares content types for the parts just
+  // removed above (dangling <Override PartName="..."/> entries). ExcelJS's
+  // own writer already regenerates this file cleanly on save, so it never
+  // reaches end users through the app — but the sanitized file on disk
+  // should be well-formed OOXML on its own, since real Excel is much
+  // stricter about this than ExcelJS/LibreOffice.
+  const contentTypesPath = '[Content_Types].xml'
+  if (zip.file(contentTypesPath)) {
+    let ct = await zip.file(contentTypesPath).async('string')
+    ct = ct.replace(/<Override PartName="\/xl\/comments\/comment\d+\.xml"[^>]*\/>/g, '')
+    zip.file(contentTypesPath, ct)
+  }
+
   // 2. Normalize every absolute relationship Target to a path relative to
   //    that .rels file's owning directory.
   const relsFiles = Object.keys(zip.files).filter(f => f.endsWith('.rels'))

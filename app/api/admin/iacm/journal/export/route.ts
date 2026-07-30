@@ -112,7 +112,7 @@ export async function GET() {
     })
 
     const buffer = await wb.xlsx.writeBuffer()
-    return new NextResponse(buffer as unknown as ArrayBuffer, {
+    return new NextResponse(Buffer.from(buffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

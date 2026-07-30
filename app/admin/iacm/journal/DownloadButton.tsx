@@ -9,10 +9,15 @@ export default function DownloadButton() {
     setLoading(true); setError('')
     try {
       const res = await fetch('/api/admin/iacm/journal/export')
-      if (!res.ok) {
+      const contentType = res.headers.get('content-type') ?? ''
+      // fetch() follows redirects transparently, so an expired/invalid admin
+      // session can come back as res.ok===true with the login page's HTML
+      // instead of the file — that downloads as a same-named ".xlsx" that
+      // Excel then reports as corrupt. Catch it here instead.
+      if (!res.ok || !contentType.includes('spreadsheetml')) {
         const text = await res.text()
         try { const j = JSON.parse(text); setError(j.error ?? 'Failed to export') }
-        catch { setError('Failed to export') }
+        catch { setError(contentType.includes('text/html') ? 'Session expired — please refresh and log in again' : 'Failed to export') }
         setLoading(false); return
       }
       const blob = await res.blob()

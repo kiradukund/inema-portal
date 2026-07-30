@@ -310,7 +310,7 @@ async function loadTemplate(): Promise<any> {
   return wb
 }
 
-export async function generateBnrReport(quarter: string): Promise<ArrayBuffer> {
+export async function generateBnrReport(quarter: string): Promise<Buffer> {
   const supabase = createAdminClient()
 
   const { data: loans } = await supabase.from('iacm_loans').select('*, iacm_clients(*)')
@@ -442,6 +442,6 @@ export async function generateBnrReport(quarter: string): Promise<ArrayBuffer> {
   writeFsValue(wsFS, itemRows, col, 116, sumBy(womenOutstanding, l => Number(l.balance_outstanding ?? 0)))
   writeFsValue(wsFS, itemRows, col, 117, womenOutstanding.length)
 
-  const buffer = await wb.xlsx.writeBuffer()
-  return buffer as unknown as ArrayBuffer
+  const buffer: Buffer = await wb.xlsx.writeBuffer()
+  return buffer
 }

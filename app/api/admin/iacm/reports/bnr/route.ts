@@ -7,7 +7,7 @@ export async function GET(req: NextRequest) {
     await requireAdmin()
     const quarter = req.nextUrl.searchParams.get('quarter') ?? 'Q3-2026'
     const buffer = await generateBnrReport(quarter)
-    return new NextResponse(buffer, {
+    return new NextResponse(Buffer.from(buffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',

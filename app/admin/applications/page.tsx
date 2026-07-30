@@ -26,7 +26,7 @@ export default async function AdminApplications() {
   }
 
   const all = apps ?? []
-  const clientIds = [...new Set(all.map((a: any) => a.client_id).filter(Boolean))]
+  const clientIds = Array.from(new Set(all.map((a: any) => a.client_id).filter(Boolean)))
   let profileMap: Record<string, any> = {}
   if (clientIds.length > 0) {
     // profiles RLS only allows a user to read their own row (auth.uid() = id),

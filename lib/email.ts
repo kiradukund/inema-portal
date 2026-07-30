@@ -1,35 +1,74 @@
 import nodemailer from 'nodemailer'
 
 const transporter = nodemailer.createTransport({
-  service: 'gmail',
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false,
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_APP_PASSWORD,
   },
+  tls: {
+    rejectUnauthorized: false,
+  },
+  pool: true,
+  maxConnections: 5,
+  rateDelta: 20000,
+  rateLimit: 5,
 })
+
+// Fires once when this module first loads (cold start). Confirms the SMTP
+// credentials/connection are actually good instead of only finding out on
+// the first real send attempt.
+transporter.verify()
+  .then(() => console.log('SMTP connection verified — ready to send email'))
+  .catch((error) => console.error('SMTP CONNECTION FAILED:', error?.message ?? error))
 
 const FROM = '"INEMA Financial Solutions" <' + (process.env.GMAIL_USER ?? '') + '>'
 const ADMIN_EMAIL = process.env.GMAIL_USER ?? ''
 const SUPPORT_PHONE = '+250 788 834 132'
 const PORTAL_URL = 'https://inema-portal-t9a3.vercel.app'
 
+const MAX_ATTEMPTS = 3
+const RETRY_DELAY_MS = 2000
+
+function sleep(ms: number) {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
 function formatRWF(n: number) {
   return `RWF ${Number(n).toLocaleString('en-RW')}`
 }
 
-async function send(to: string, subject: string, html: string) {
+// Retries up to MAX_ATTEMPTS times, 2s apart. Never throws — the Gmail SMTP
+// connection is intermittent, and a dropped notification email shouldn't
+// fail the loan approval / registration / application it's attached to.
+// Returns whether it actually got sent, so callers that care can check.
+export async function sendRaw(to: string | string[], subject: string, html: string): Promise<boolean> {
   if (!process.env.GMAIL_USER || !process.env.GMAIL_APP_PASSWORD) {
     console.error('EMAIL SKIPPED: GMAIL_USER or GMAIL_APP_PASSWORD env var missing')
-    return
+    return false
   }
-  const recipients = [...new Set([to, ADMIN_EMAIL].filter(Boolean))]
-  try {
-    const info = await transporter.sendMail({ from: FROM, to: recipients, subject, html })
-    console.log('EMAIL SENT:', subject, '-> ', recipients.join(','), info.messageId)
-  } catch (e) {
-    console.error('EMAIL SEND FAILED:', subject, e)
-    throw e
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    console.log('SENDING EMAIL:', { to, subject, timestamp: new Date().toISOString() })
+    try {
+      const info = await transporter.sendMail({ from: FROM, to, subject, html })
+      console.log('EMAIL SUCCESS:', { to, subject, messageId: info.messageId })
+      return true
+    } catch (e: any) {
+      console.error('EMAIL FAILED:', { to, subject, error: e?.message ?? String(e), attempt })
+      if (attempt < MAX_ATTEMPTS) await sleep(RETRY_DELAY_MS)
+    }
   }
+
+  console.error('EMAIL GAVE UP AFTER', MAX_ATTEMPTS, 'ATTEMPTS:', { to, subject })
+  return false
+}
+
+async function send(to: string, subject: string, html: string) {
+  const recipients = Array.from(new Set([to, ADMIN_EMAIL].filter(Boolean)))
+  await sendRaw(recipients, subject, html)
 }
 
 export async function sendApplicationConfirmation({ clientEmail, clientName, applicationNumber, loanType, amount, termMonths }: {

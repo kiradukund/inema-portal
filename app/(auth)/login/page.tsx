@@ -28,8 +28,10 @@ function LoginForm() {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <p className="text-slate-800 font-bold font-serif text-2xl">INEMA</p>
-          <p className="text-amber-600 text-xs tracking-widest uppercase mt-1">Financial Solutions Ltd</p>
+          <Link href="/" title="Go to INEMA homepage" className="inline-block cursor-pointer hover:opacity-80 transition-opacity">
+            <p className="text-slate-800 font-bold font-serif text-2xl">INEMA</p>
+            <p className="text-amber-600 text-xs tracking-widest uppercase mt-1">Financial Solutions Ltd</p>
+          </Link>
           <p className="text-xs text-slate-400 mt-3">One login — redirected based on your access level</p>
         </div>
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-8">

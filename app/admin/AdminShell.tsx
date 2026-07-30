@@ -29,8 +29,10 @@ export default function AdminShell({ navItems, iacmItems, unreadInquiries, child
         transition-transform duration-300 ease-in-out md:translate-x-0
         ${open ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-5 border-b border-slate-800">
-          <p className="text-white font-bold font-serif text-base">INEMA</p>
-          <p className="text-amber-500 text-xs tracking-widest uppercase mt-0.5">Admin Portal</p>
+          <Link href="/" title="Go to INEMA homepage" className="inline-block cursor-pointer hover:opacity-80 transition-opacity">
+            <p className="text-white font-bold font-serif text-base">INEMA</p>
+            <p className="text-amber-500 text-xs tracking-widest uppercase mt-0.5">Admin Portal</p>
+          </Link>
         </div>
         <nav className="flex-1 p-3 space-y-0.5">
           <p className="text-xs font-bold text-slate-500 uppercase tracking-widest px-3 py-2 mt-1">Portal</p>

@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter, usePathname } from 'next/navigation'
 
 const NAV_LINKS = [
   { href: '/dashboard',     label: 'Dashboard',      icon: '📊' },
@@ -18,12 +19,21 @@ export default function PortalShell({ fullName, role, isAdmin, children }: {
   children: React.ReactNode
 }) {
   const [open, setOpen] = useState(false)
+  const router = useRouter()
+  const pathname = usePathname()
 
   // Lock background scroll while the mobile sidebar is open.
   useEffect(() => {
     document.body.style.overflow = open ? 'hidden' : ''
     return () => { document.body.style.overflow = '' }
   }, [open])
+
+  function goHome() {
+    if (pathname?.includes('/loans/apply')) {
+      if (!window.confirm('You have an unsaved loan application. Are you sure you want to leave?')) return
+    }
+    router.push('/')
+  }
 
   return (
     <div className="min-h-screen flex bg-slate-50">
@@ -36,8 +46,10 @@ export default function PortalShell({ fullName, role, isAdmin, children }: {
         transition-transform duration-300 ease-in-out md:translate-x-0
         ${open ? 'translate-x-0' : '-translate-x-full'}`}>
         <div className="p-6 border-b border-slate-700">
-          <p className="text-white font-bold text-lg" style={{fontFamily:'Georgia,serif'}}>INEMA</p>
-          <p className="text-amber-500 text-xs tracking-widest uppercase">Financial Solutions</p>
+          <button onClick={goHome} title="Go to INEMA homepage" className="text-left cursor-pointer hover:opacity-80 transition-opacity">
+            <p className="text-white font-bold text-lg" style={{fontFamily:'Georgia,serif'}}>INEMA</p>
+            <p className="text-amber-500 text-xs tracking-widest uppercase">Financial Solutions</p>
+          </button>
         </div>
         <div className="px-6 py-4 border-b border-slate-700">
           <p className="text-white font-semibold text-sm truncate">{fullName}</p>

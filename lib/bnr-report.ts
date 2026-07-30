@@ -306,7 +306,7 @@ function writeFsValue(ws: any, itemRows: Record<number, number>, col: number, it
 async function loadTemplate(): Promise<any> {
   const buf = fs.readFileSync(TEMPLATE_PATH)
   const wb = new ExcelJS.Workbook()
-  await wb.xlsx.load(buf)
+  await wb.xlsx.load(buf as any)
   return wb
 }
 

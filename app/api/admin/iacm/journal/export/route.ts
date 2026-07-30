@@ -77,7 +77,7 @@ export async function GET() {
 
     const buf = fs.readFileSync(TEMPLATE_PATH)
     const wb = new ExcelJS.Workbook()
-    await wb.xlsx.load(buf)
+    await wb.xlsx.load(buf as any)
     const ws = wb.getWorksheet(JOURNAL_SHEET_NAME)
     if (!ws) throw new Error(`"${JOURNAL_SHEET_NAME}" sheet not found in journal_template.xlsx`)
 

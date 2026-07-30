@@ -1,11 +1,11 @@
 import { requireAdmin } from '@/lib/admin'
-import { createServerSupabaseClient } from '@/lib/supabase'
+import { createAdminClient } from '@/lib/supabase'
 
 export const dynamic = 'force-dynamic'
 
 export default async function AdminInquiries() {
   await requireAdmin()
-  const supabase = await createServerSupabaseClient()
+  const supabase = createAdminClient()
   const { data: messages } = await supabase.from('contact_messages').select('*').order('created_at', { ascending: false })
   const all = messages ?? []
   const unread = all.filter(m => !m.is_read).length

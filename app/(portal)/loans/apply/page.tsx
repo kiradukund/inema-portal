@@ -69,6 +69,21 @@ export default function ApplyPage() {
       })
       const data = await res.json()
       if (!data.success) { setError(data.error || 'Submission failed'); setLoading(false); return }
+
+      // Upload any attached documents against the just-created application.
+      // Best-effort: a client can still submit via the "Have it?" checkbox
+      // fallback without a file, so an upload failure here shouldn't block
+      // an otherwise-successful application.
+      if (Object.keys(uploadedFiles).length > 0) {
+        try {
+          const fd = new FormData()
+          Object.entries(uploadedFiles).forEach(([key, file]) => fd.append(key, file))
+          await fetch(`/api/applications/${data.data.application.id}/documents`, { method: 'POST', body: fd })
+        } catch {
+          console.error('Document upload failed (non-fatal)')
+        }
+      }
+
       router.push('/dashboard?applied=1')
     } catch {
       setError('Network error. Please try again.')

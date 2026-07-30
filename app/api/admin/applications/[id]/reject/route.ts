@@ -8,11 +8,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try {
     await requireAdmin()
     const { id } = await params
+    // auth.getUser() needs the logged-in admin's session cookie, so this one
+    // call stays on the regular client; every table read/write below uses
+    // the service-role client so none of it depends on RLS matching the
+    // acting admin's own profile row (profiles RLS only allows auth.uid() =
+    // id, which would silently return nothing for any other client's row).
     const supabase = await createServerSupabaseClient()
+    const adminClient = createAdminClient()
     const body = await req.json().catch(() => ({}))
     const review_notes = body.review_notes ?? 'Application not approved at this time.'
 
-    const { data: app, error: appErr } = await supabase.from('loan_applications').select('*').eq('id', id).single()
+    const { data: app, error: appErr } = await adminClient.from('loan_applications').select('*').eq('id', id).single()
     if (appErr || !app) return err('Application not found', 404)
     if (app.status === 'rejected') return err('Application already rejected')
 
@@ -20,13 +26,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // If previously approved, cancel the associated loan
     if (app.status === 'approved') {
-      const { data: loanByAppId } = await supabase
+      const { data: loanByAppId } = await adminClient
         .from('loans').select('id').eq('application_id', id).maybeSingle()
 
       let loanToCancel = loanByAppId
 
       if (!loanToCancel) {
-        const { data: loanByClient } = await supabase
+        const { data: loanByClient } = await adminClient
           .from('loans').select('id')
           .eq('client_id', app.client_id)
           .in('status', ['active', 'disbursed'])
@@ -37,7 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
 
       if (loanToCancel) {
-        const { error: cancelErr } = await supabase
+        const { error: cancelErr } = await adminClient
           .from('loans').update({ status: 'cancelled' }).eq('id', loanToCancel.id)
         if (cancelErr) {
           console.error('Failed to cancel loan:', cancelErr)
@@ -46,16 +52,16 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       }
 
       // Also mark the imported_loan as inactive (best-effort, non-fatal)
-      const { data: profileForCancel } = await supabase.from('profiles').select('full_name').eq('id', app.client_id).single()
+      const { data: profileForCancel } = await adminClient.from('profiles').select('full_name').eq('id', app.client_id).single()
       if (profileForCancel?.full_name) {
-        await supabase.from('imported_loans')
+        await adminClient.from('imported_loans')
           .update({ status: 'paid', notes: `CANCELLED by admin: ${review_notes}` })
           .eq('client_name', profileForCancel.full_name)
           .eq('status', 'active')
       }
     }
 
-    const { error } = await supabase.from('loan_applications').update({
+    const { error } = await adminClient.from('loan_applications').update({
       status: 'rejected',
       reviewed_by: user?.id,
       reviewed_at: new Date().toISOString(),
@@ -65,10 +71,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
 
     // Email — non-blocking but logged
     try {
-      const adminClient = createAdminClient()
       const { data: authData } = await adminClient.auth.admin.getUserById(app.client_id)
       const clientEmail = authData?.user?.email
-      const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', app.client_id).single()
+      const { data: profile } = await adminClient.from('profiles').select('full_name').eq('id', app.client_id).single()
 
       if (clientEmail) {
         await sendLoanRejection({

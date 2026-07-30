@@ -1,8 +1,13 @@
 import { requireAdmin } from '@/lib/admin'
+import { createAdminClient } from '@/lib/supabase'
 import Link from 'next/link'
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   await requireAdmin()
+  const adminSupabase = createAdminClient()
+  const { count: unreadInquiries } = await adminSupabase
+    .from('contact_messages').select('*', { count: 'exact', head: true }).eq('is_read', false)
+
   const navItems = [
     { href: '/admin',               icon: '📊', label: 'Dashboard' },
     { href: '/admin/applications',  icon: '📥', label: 'Applications' },
@@ -39,7 +44,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
           {navItems.map(item => (
             <Link key={item.href} href={item.href}
               className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-colors text-sm font-medium">
-              <span className="text-base">{item.icon}</span>{item.label}
+              <span className="text-base">{item.icon}</span>
+              <span className="flex-1">{item.label}</span>
+              {item.href === '/admin/inquiries' && !!unreadInquiries && (
+                <span className="bg-red-500 text-white text-xs font-bold px-1.5 py-0.5 rounded-full min-w-[18px] text-center">
+                  {unreadInquiries}
+                </span>
+              )}
             </Link>
           ))}
           <p className="text-xs font-bold text-slate-500 uppercase tracking-widest px-3 py-2 mt-3">IACM — Accounting</p>

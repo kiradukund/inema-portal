@@ -592,3 +592,20 @@ create policy "admin_only_iacm_journal_entries" on iacm_journal_entries
 create index if not exists idx_iacm_loans_client_id on iacm_loans(client_id);
 create index if not exists idx_iacm_payments_loan_id on iacm_payments(loan_id);
 create index if not exists idx_iacm_journal_entries_account_date on iacm_journal_entries(account_code, entry_date);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- LOAN APPLICATION DOCUMENT UPLOADS — Run this in Supabase SQL Editor
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Each entry: { type, label, path, uploaded_at }. `path` is the storage
+-- object path (client_id/application_id/filename), not a public URL — the
+-- bucket is private, so admin viewing goes through signed URLs generated
+-- server-side with the service-role client (see app/api/admin/applications/
+-- [id]/documents/route.ts). Uploads also go through a server route using the
+-- service-role client (app/api/applications/[id]/documents/route.ts), so no
+-- client-facing storage RLS policies are needed — the bucket stays fully
+-- locked down and only the server ever touches it.
+alter table loan_applications add column if not exists document_urls jsonb not null default '[]'::jsonb;
+
+insert into storage.buckets (id, name, public)
+values ('loan-documents', 'loan-documents', false)
+on conflict (id) do nothing;

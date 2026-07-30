@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { createServerSupabaseClient } from '@/lib/supabase'
+import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
 import { requireAdmin } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 import { calculateLoan } from '@/lib/calculator'
@@ -10,10 +10,15 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   try {
     await requireAdmin()
     const { id } = await params
+    // auth.getUser() needs the logged-in admin's session cookie, so this one
+    // call stays on the regular client; every table read/write below uses
+    // the service-role client so none of it depends on RLS matching the
+    // acting admin's own profile row.
     const supabase = await createServerSupabaseClient()
+    const adminSupabase = createAdminClient()
     const body = await req.json().catch(() => ({}))
 
-    const { data: app, error: fetchErr } = await supabase.from('loan_applications').select('*').eq('id', id).single()
+    const { data: app, error: fetchErr } = await adminSupabase.from('loan_applications').select('*').eq('id', id).single()
     if (fetchErr || !app) return err('Application not found', 404)
     if (app.status !== 'submitted') return err('Application already processed')
 
@@ -24,21 +29,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const calc = calculateLoan({ principal: approved_amount, term_months: approved_term, loan_type: app.loan_type as LoanType })
     const { data: { user } } = await supabase.auth.getUser()
 
-    await supabase.from('loan_applications').update({
+    await adminSupabase.from('loan_applications').update({
       status: 'approved', approved_amount, approved_term_months: approved_term,
       reviewed_by: user?.id, reviewed_at: new Date().toISOString(), review_notes,
     }).eq('id', id)
 
-    const { data: profile } = await supabase.from('profiles').select('full_name, phone, email').eq('id', app.client_id).single()
+    const { data: profile } = await adminSupabase.from('profiles').select('full_name, phone, email').eq('id', app.client_id).single()
     const clientName = profile?.full_name ?? 'Client'
 
-    const { count: loanCount } = await supabase.from('imported_loans').select('*', { count: 'exact', head: true })
+    const { count: loanCount } = await adminSupabase.from('imported_loans').select('*', { count: 'exact', head: true })
     const loanNumber = `LN-${new Date().getFullYear()}-${String((loanCount ?? 0) + 1).padStart(4, '0')}`
     const startDate  = new Date()
     const repayDate  = new Date(startDate)
     repayDate.setMonth(repayDate.getMonth() + approved_term)
 
-    const { data: importedLoan } = await supabase.from('imported_loans').insert({
+    const { data: importedLoan } = await adminSupabase.from('imported_loans').insert({
       client_name: clientName, principal: approved_amount, loan_type: app.loan_type,
       term_months: approved_term, date_offered: startDate.toISOString().split('T')[0],
       repayment_date: repayDate.toISOString().split('T')[0], total_due: calc.total_repayment,
@@ -51,10 +56,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         loan_id: importedLoan.id, client_name: clientName, num: i + 1,
         amount: s.total_payment, due_date: s.due_date, status: 'not paid', amount_paid: 0,
       }))
-      await supabase.from('installments').insert(installments)
+      await adminSupabase.from('installments').insert(installments)
     }
 
-    const { data: clientLoan, error: loanErr } = await supabase.from('loans').insert({
+    const { data: clientLoan, error: loanErr } = await adminSupabase.from('loans').insert({
       client_id: app.client_id,
       application_id: id,
       loan_number: loanNumber,
@@ -91,7 +96,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       status: 'upcoming',
       late_fee: 0,
     }))
-    const { error: schedErr } = await supabase.from('repayment_schedules').insert(repaymentSchedules)
+    const { error: schedErr } = await adminSupabase.from('repayment_schedules').insert(repaymentSchedules)
     if (schedErr) return serverError(schedErr)
 
     try {

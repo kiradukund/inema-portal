@@ -1,6 +1,7 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
-import { createServerSupabaseClient } from '@/lib/supabase'
+import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
 import ApplicationActions from './ApplicationActions'
+import DocumentsButton from './DocumentsButton'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -27,7 +28,12 @@ export default async function AdminApplications() {
   const clientIds = [...new Set(all.map((a: any) => a.client_id).filter(Boolean))]
   let profileMap: Record<string, any> = {}
   if (clientIds.length > 0) {
-    const { data: profiles } = await supabase
+    // profiles RLS only allows a user to read their own row (auth.uid() = id),
+    // so an admin session can't see other clients' profiles through the
+    // regular server client — every name/phone would render as "—" except
+    // the admin's own. Use the service-role client to bypass that here.
+    const adminSupabase = createAdminClient()
+    const { data: profiles } = await adminSupabase
       .from('profiles').select('id, full_name, phone, employer_name').in('id', clientIds)
     ;(profiles ?? []).forEach((p: any) => { profileMap[p.id] = p })
   }
@@ -86,6 +92,7 @@ export default async function AdminApplications() {
                 {all.map((app: any) => {
                   const profile = profileMap[app.client_id] ?? {}
                   const docs = [app.has_id_copy,app.has_payslips,app.has_bank_statement,app.has_employment_letter,app.has_application_letter].filter(Boolean).length
+                  const uploadedDocsCount = Array.isArray(app.document_urls) ? app.document_urls.length : 0
                   const showActions = app.status === 'submitted' || app.status === 'approved'
                   return (
                     <tr key={app.id} className="border-b border-slate-50 hover:bg-slate-50">
@@ -98,7 +105,10 @@ export default async function AdminApplications() {
                       <td className="px-4 py-3 text-slate-500 max-w-[130px] truncate" title={app.purpose}>{app.purpose ?? '—'}</td>
                       <td className="px-4 py-3 text-slate-500">{app.employer ?? profile.employer_name ?? '—'}</td>
                       <td className="px-4 py-3">
-                        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${docs >= 3 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{docs}/5</span>
+                        <div className="flex flex-col gap-1.5 items-start">
+                          <span className={`text-xs font-semibold px-2 py-1 rounded-full ${docs >= 3 ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{docs}/5</span>
+                          <DocumentsButton applicationId={app.id} count={uploadedDocsCount} />
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{app.submitted_at ? new Date(app.submitted_at).toLocaleDateString('en-RW') : '—'}</td>
                       <td className="px-4 py-3">

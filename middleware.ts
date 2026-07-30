@@ -41,7 +41,16 @@ export async function middleware(request: NextRequest) {
 
   if (pathname === '/login' && user) {
     const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-    if (profile?.role === 'admin') return NextResponse.redirect(new URL('/admin', request.url))
+    if (profile?.role === 'admin') {
+      // /login is a client-only boundary — an admin session must never be
+      // waved through to /admin from here, even if they were already
+      // authenticated (e.g. from a prior /staff-login session) before
+      // landing on this page. Sign them out and show why.
+      await supabase.auth.signOut()
+      const signedOutRedirect = NextResponse.redirect(new URL('/login?notice=staff-only', request.url))
+      response.cookies.getAll().forEach(cookie => signedOutRedirect.cookies.set(cookie))
+      return signedOutRedirect
+    }
     return NextResponse.redirect(new URL('/dashboard', request.url))
   }
 

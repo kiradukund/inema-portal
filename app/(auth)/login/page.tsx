@@ -9,8 +9,15 @@ function ClientPortalAuth() {
   const redirect     = searchParams.get('redirect') ?? '/dashboard'
   const resetOk      = searchParams.get('reset') === 'success'
   const initialTab   = searchParams.get('tab') === 'register' ? 'register' : 'login'
+  const staffOnlyNotice = searchParams.get('notice') === 'staff-only'
 
   const [tab, setTab] = useState<'login' | 'register'>(initialTab)
+
+  function switchTab(next: 'login' | 'register') {
+    setTab(next)
+    setError(''); setAdminNotice(false)
+    setRegError(''); setRegSuccess('')
+  }
 
   // Sign in
   const [email, setEmail]       = useState('')
@@ -34,12 +41,13 @@ function ClientPortalAuth() {
       if (!data.success) { setError(data.error ?? 'Login failed'); setLoading(false); return }
 
       if (data.data.user.role === 'admin') {
-        // This account is staff — the client portal isn't the right entry
-        // point. Middleware will forward /staff-login on to /admin for an
-        // already-authenticated admin, so this brief notice is the only
-        // place the user actually sees the explanation.
+        // /login is a client-only boundary. The login call above already
+        // authenticated this session server-side — sign it out immediately
+        // rather than let an admin session exist here even briefly, and
+        // point them at the right door instead of auto-redirecting them.
+        await fetch('/api/auth/logout', { method: 'POST' }).catch(() => {})
         setAdminNotice(true)
-        setTimeout(() => { router.push('/staff-login') }, 1800)
+        setLoading(false)
         return
       }
       router.push(redirect); router.refresh()
@@ -81,11 +89,11 @@ function ClientPortalAuth() {
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
           {/* Tabs */}
           <div className="flex border-b border-slate-100">
-            <button onClick={() => setTab('login')}
+            <button onClick={() => switchTab('login')}
               className={`flex-1 py-3.5 text-sm font-bold transition-colors ${tab === 'login' ? 'text-amber-600 border-b-2 border-amber-500 -mb-px' : 'text-slate-400 hover:text-slate-600'}`}>
               Sign In
             </button>
-            <button onClick={() => setTab('register')}
+            <button onClick={() => switchTab('register')}
               className={`flex-1 py-3.5 text-sm font-bold transition-colors ${tab === 'register' ? 'text-amber-600 border-b-2 border-amber-500 -mb-px' : 'text-slate-400 hover:text-slate-600'}`}>
               Register
             </button>
@@ -95,7 +103,11 @@ function ClientPortalAuth() {
             {tab === 'login' ? (
               <>
                 {resetOk && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">✓ Password updated. Please sign in.</div>}
-                {adminNotice && <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-sm">This is a staff account — redirecting you to the staff portal...</div>}
+                {(adminNotice || staffOnlyNotice) && (
+                  <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-sm">
+                    This portal is for clients only. Please use <Link href="/staff-login" className="font-semibold underline">Staff Login →</Link>
+                  </div>
+                )}
                 {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
                 <label className="label">Email Address</label>
                 <input type="email" className="input mb-4" placeholder="you@email.com" value={email} onChange={e => setEmail(e.target.value)} />

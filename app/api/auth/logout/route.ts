@@ -1,20 +1,27 @@
+import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
-import { NextResponse } from 'next/server'
 
-export async function POST() {
-  try {
-    const supabase = await createServerSupabaseClient()
-    await supabase.auth.signOut()
-    return NextResponse.redirect('https://inema-portal-t9a3.vercel.app/login', { status: 302 })
-  } catch (e) {
-    return NextResponse.redirect('https://inema-portal-t9a3.vercel.app/login', { status: 302 })
-  }
+const ALLOWED_REDIRECTS = new Set(['/login', '/staff-login'])
+
+function redirectTarget(req: NextRequest) {
+  const to = req.nextUrl.searchParams.get('to')
+  return ALLOWED_REDIRECTS.has(to ?? '') ? to! : '/login'
 }
 
-export async function GET() {
+export async function POST(req: NextRequest) {
+  const target = redirectTarget(req)
   try {
     const supabase = await createServerSupabaseClient()
     await supabase.auth.signOut()
   } catch {}
-  return NextResponse.redirect('https://inema-portal-t9a3.vercel.app/login', { status: 302 })
+  return NextResponse.redirect(new URL(target, req.url), { status: 302 })
+}
+
+export async function GET(req: NextRequest) {
+  const target = redirectTarget(req)
+  try {
+    const supabase = await createServerSupabaseClient()
+    await supabase.auth.signOut()
+  } catch {}
+  return NextResponse.redirect(new URL(target, req.url), { status: 302 })
 }

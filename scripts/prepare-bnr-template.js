@@ -1,9 +1,8 @@
 /**
  * One-time sanitizer for the official BNR reporting template.
  *
- * The template as issued by BNR/the preparer uses two non-standard OOXML
- * patterns that make ExcelJS (this project's xlsx library) refuse to load
- * it:
+ * The template as issued by BNR/the preparer has a few non-standard OOXML
+ * patterns that don't survive ExcelJS (this project's xlsx library):
  *
  *   1. Cell comments live at xl/comments/comment1.xml and comment2.xml.
  *      ExcelJS only recognizes xl/commentsN.xml (no subfolder), so these
@@ -14,8 +13,14 @@
  *   2. Every relationship file in the workbook uses absolute
  *      Target="/xl/..." paths. This is legal OPC but ExcelJS expects paths
  *      relative to the owning part's directory, so worksheet/table
- *      relationships silently fail to resolve. We rewrite every such
- *      Target to a proper relative path.
+ *      relationships silently fail to resolve.
+ *   3. The workbook's Excel Tables don't survive an ExcelJS load+save
+ *      round-trip intact (totalsRowShown flips to "1" with no real totals
+ *      row, dxf style references get dropped) — an internally inconsistent
+ *      Table definition that real Excel's strict validator rejects even
+ *      though the zip itself is well-formed. None of our fill code depends
+ *      on Table-level styling, so we remove the Table definitions and keep
+ *      the sheets as plain cell ranges.
  *
  * Run once whenever BNR issues a new template:
  *   node scripts/prepare-bnr-template.js <source.xlsx> [public/bnr_template.xlsx]
@@ -23,6 +28,7 @@
 const JSZip = require('jszip')
 const fs = require('fs')
 const path = require('path')
+const { normalizeRelativeTargets, stripExcelTables } = require('./lib/xlsx-sanitize')
 
 const SRC = process.argv[2]
 const OUT = process.argv[3] || path.join(__dirname, '..', 'public', 'bnr_template.xlsx')
@@ -32,18 +38,11 @@ if (!SRC) {
   process.exit(1)
 }
 
-function ownerDir(relsPath) {
-  // e.g. xl/worksheets/_rels/sheet1.xml.rels -> xl/worksheets
-  return path.posix.dirname(path.posix.dirname(relsPath))
-}
-
 async function main() {
   const buf = fs.readFileSync(SRC)
   const zip = await JSZip.loadAsync(buf)
 
   // 1. Strip unresolvable comment/vmlDrawing relationships + legacyDrawing refs.
-  //    (Only sheet1/sheet2 have comments in the current template, but this
-  //    loop is safe to run against any sheetN.xml.rels that has them.)
   const sheetRelFiles = Object.keys(zip.files).filter(f => /xl\/worksheets\/_rels\/sheet\d+\.xml\.rels$/.test(f))
   for (const relPath of sheetRelFiles) {
     const xml = await zip.file(relPath).async('string')
@@ -64,11 +63,7 @@ async function main() {
   }
 
   // [Content_Types].xml still declares content types for the parts just
-  // removed above (dangling <Override PartName="..."/> entries). ExcelJS's
-  // own writer already regenerates this file cleanly on save, so it never
-  // reaches end users through the app — but the sanitized file on disk
-  // should be well-formed OOXML on its own, since real Excel is much
-  // stricter about this than ExcelJS/LibreOffice.
+  // removed above (dangling <Override PartName="..."/> entries).
   const contentTypesPath = '[Content_Types].xml'
   if (zip.file(contentTypesPath)) {
     let ct = await zip.file(contentTypesPath).async('string')
@@ -76,23 +71,14 @@ async function main() {
     zip.file(contentTypesPath, ct)
   }
 
-  // 2. Normalize every absolute relationship Target to a path relative to
-  //    that .rels file's owning directory.
-  const relsFiles = Object.keys(zip.files).filter(f => f.endsWith('.rels'))
-  for (const relPath of relsFiles) {
-    const file = zip.file(relPath)
-    if (!file) continue
-    const dir = ownerDir(relPath)
-    const xml = await file.async('string')
-    const rewritten = xml.replace(/Target="(\/[^"]+)"/g, (_m, target) => {
-      const abs = target.replace(/^\//, '')
-      const rel = path.posix.relative(dir, abs)
-      return `Target="${rel}"`
-    })
-    zip.file(relPath, rewritten)
-  }
+  // 2. Remove Excel Tables — see file header comment for why.
+  await stripExcelTables(zip)
 
-  const outBuf = await zip.generateAsync({ type: 'nodebuffer' })
+  // 3. Normalize every absolute relationship Target to a path relative to
+  //    that .rels file's owning directory.
+  await normalizeRelativeTargets(zip)
+
+  const outBuf = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } })
   fs.mkdirSync(path.dirname(OUT), { recursive: true })
   fs.writeFileSync(OUT, outBuf)
   console.log(`Sanitized template written to ${OUT} (${outBuf.length} bytes)`)

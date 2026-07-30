@@ -609,3 +609,27 @@ alter table loan_applications add column if not exists document_urls jsonb not n
 insert into storage.buckets (id, name, public)
 values ('loan-documents', 'loan-documents', false)
 on conflict (id) do nothing;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- CLIENT PAYMENT PROOF UPLOADS — Run this in Supabase SQL Editor
+-- ═══════════════════════════════════════════════════════════════════════════
+-- loan_id/client_id here refer to the portal `loans`/`profiles` tables (the
+-- client-facing loan a client sees on /loans), NOT iacm_loans/iacm_clients —
+-- those are a separate, unrelated accounting system with no shared ID space.
+-- RLS is disabled; all access goes through the server API routes below,
+-- which check ownership/admin status themselves:
+--   app/api/loans/[id]/payment-proof/route.ts        (client upload)
+--   app/api/admin/loans/[id]/payment-proofs/route.ts (admin list + signed URLs)
+--   app/api/admin/payment-proofs/[id]/route.ts       (admin approve/reject)
+create table if not exists iacm_payment_proofs (
+  id uuid primary key default uuid_generate_v4(),
+  loan_id uuid,
+  client_id uuid,
+  payment_date date,
+  amount numeric,
+  file_url text,
+  status text default 'pending',
+  notes text,
+  created_at timestamptz default now()
+);
+alter table iacm_payment_proofs disable row level security;

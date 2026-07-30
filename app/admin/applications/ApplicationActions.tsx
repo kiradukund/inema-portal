@@ -3,14 +3,19 @@ import { useState } from 'react'
 
 interface Props { id: string; clientName: string; clientPhone: string; amount: number; term: number; status: string }
 
+const REVOKE_REASONS = ['Loan Fully Repaid', 'Client Request', 'Policy Violation', 'Duplicate Application', 'Other']
+
 export default function ApplicationActions({ id, clientName, clientPhone, amount, term, status }: Props) {
-  const [loading, setLoading]           = useState<'approve'|'reject'|null>(null)
+  const [loading, setLoading]           = useState<'approve'|'reject'|'revoke'|null>(null)
   const [done, setDone]                 = useState<string|null>(null)
   const [showApprove, setShowApprove]   = useState(false)
   const [showReject, setShowReject]     = useState(false)
+  const [showRevoke, setShowRevoke]     = useState(false)
   const [approveAmount, setApproveAmount] = useState(String(amount))
   const [approveTerm, setApproveTerm]     = useState(String(term))
   const [rejectNote, setRejectNote]       = useState('')
+  const [revokeReason, setRevokeReason]   = useState(REVOKE_REASONS[0])
+  const [revokeNotes, setRevokeNotes]     = useState('')
 
   if (done) return (
     <div className="flex items-center gap-2">
@@ -46,11 +51,24 @@ export default function ApplicationActions({ id, clientName, clientPhone, amount
     else alert('Error: ' + (data.error ?? 'Failed'))
   }
 
+  async function revoke() {
+    setLoading('revoke')
+    const review_notes = revokeNotes ? `${revokeReason}: ${revokeNotes}` : revokeReason
+    const res = await fetch(`/api/admin/applications/${id}/reject`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ review_notes }),
+    })
+    const data = await res.json()
+    setLoading(null)
+    if (data.success) { setDone(`🚫 Revoked — ${revokeReason}`); setShowRevoke(false) }
+    else alert('Error: ' + (data.error ?? 'Failed'))
+  }
+
   const isApproved = status === 'approved'
 
   return (
     <div className="flex flex-col gap-2 min-w-[180px]">
-      {!showApprove && !showReject && (
+      {!showApprove && !showReject && !showRevoke && (
         <div className="flex gap-2 flex-wrap">
           {!isApproved && (
             <button onClick={() => setShowApprove(true)}
@@ -62,6 +80,38 @@ export default function ApplicationActions({ id, clientName, clientPhone, amount
             className={`text-xs px-3 py-1.5 rounded-lg font-semibold border ${isApproved ? 'bg-red-600 text-white hover:bg-red-700 border-red-600' : 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100'}`}>
             {isApproved ? '✗ Cancel Loan' : '✗ Reject'}
           </button>
+          {isApproved && (
+            <button onClick={() => setShowRevoke(true)}
+              className="text-xs bg-red-800 text-white px-3 py-1.5 rounded-lg hover:bg-red-900 font-semibold">
+              🚫 Revoke Loan
+            </button>
+          )}
+        </div>
+      )}
+
+      {showRevoke && (
+        <div className="bg-red-50 border border-red-300 rounded-lg p-3 space-y-2">
+          <p className="text-xs font-bold text-red-900">Revoke Loan — {clientName}</p>
+          <div>
+            <label className="text-xs text-red-700">Reason</label>
+            <select value={revokeReason} onChange={e => setRevokeReason(e.target.value)}
+              className="w-full text-xs border border-red-300 rounded px-2 py-1 block mt-0.5 bg-white">
+              {REVOKE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs text-red-700">Notes</label>
+            <textarea value={revokeNotes} onChange={e => setRevokeNotes(e.target.value)}
+              placeholder="Additional details (optional)..."
+              className="w-full text-xs border border-red-300 rounded px-2 py-1 min-h-[48px] resize-none block mt-0.5" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={revoke} disabled={loading==='revoke'}
+              className="text-xs bg-red-800 text-white px-3 py-1.5 rounded-lg hover:bg-red-900 font-semibold disabled:opacity-60">
+              {loading==='revoke' ? 'Revoking...' : 'Confirm Revoke'}
+            </button>
+            <button onClick={() => setShowRevoke(false)} className="text-xs text-red-700 hover:underline">Cancel</button>
+          </div>
         </div>
       )}
 

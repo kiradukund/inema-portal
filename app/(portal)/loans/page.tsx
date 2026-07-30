@@ -2,6 +2,7 @@ import { createServerSupabaseClient } from '@/lib/supabase'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { formatRWF } from '@/lib/calculator'
+import PaymentProofUpload from './PaymentProofUpload'
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
@@ -117,7 +118,7 @@ export default async function LoansPage() {
                         <table className="w-full text-sm">
                           <thead>
                             <tr className="border-b border-slate-100">
-                              {['Month','Due Date','Amount','Paid','Status'].map(h => (
+                              {['Month','Due Date','Amount','Paid','Status','Proof'].map(h => (
                                 <th key={h} className="text-left py-2 px-3 text-xs font-semibold text-slate-400 uppercase">{h}</th>
                               ))}
                             </tr>
@@ -137,6 +138,12 @@ export default async function LoansPage() {
                                       'bg-slate-100 text-slate-500'}`}>
                                     {s.status}
                                   </span>
+                                </td>
+                                <td className="py-2 px-3">
+                                  {s.status !== 'paid' && (
+                                    <PaymentProofUpload loanId={loan.id} monthNumber={s.month_number}
+                                      defaultAmount={(s.total_due ?? 0) - (s.amount_paid ?? 0)} />
+                                  )}
                                 </td>
                               </tr>
                             ))}

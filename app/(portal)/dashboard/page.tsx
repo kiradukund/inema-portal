@@ -177,6 +177,23 @@ export default async function DashboardPage() {
           ))}
         </div>
       </div>
+
+      {/* Sticky help bar */}
+      <div className="sticky bottom-0 left-0 right-0 -mx-8 -mb-8 mt-8 bg-slate-900 border-t-2 border-amber-500 px-8 py-3 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-slate-200">
+          <span className="text-amber-400 font-semibold">Need help?</span> Call or WhatsApp us: <span className="font-semibold text-white">+250 788 834 132</span>
+        </p>
+        <div className="flex gap-2">
+          <a href="https://wa.me/250788834132" target="_blank" rel="noreferrer"
+            className="text-xs font-semibold bg-amber-500 text-slate-900 px-3 py-1.5 rounded-lg hover:bg-amber-400 transition-colors">
+            💬 WhatsApp
+          </a>
+          <a href="tel:+250788834132"
+            className="text-xs font-semibold border border-amber-500 text-amber-400 px-3 py-1.5 rounded-lg hover:bg-slate-800 transition-colors">
+            📞 Call Us
+          </a>
+        </div>
+      </div>
     </div>
   )
 }

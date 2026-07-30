@@ -2,6 +2,7 @@ import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
 import ApplicationActions from './ApplicationActions'
 import DocumentsButton from './DocumentsButton'
+import PaymentSection from './PaymentSection'
 
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
@@ -36,6 +37,18 @@ export default async function AdminApplications() {
     const { data: profiles } = await adminSupabase
       .from('profiles').select('id, full_name, phone, employer_name').in('id', clientIds)
     ;(profiles ?? []).forEach((p: any) => { profileMap[p.id] = p })
+  }
+
+  // Approved applications each have a resulting `loans` row (created by the
+  // approve route) — needed to attach "Mark Payment" / "View Payment Proofs"
+  // to the actual loan the client sees on their own /loans page.
+  const approvedAppIds = all.filter((a: any) => a.status === 'approved').map((a: any) => a.id)
+  let loanByAppId: Record<string, string> = {}
+  if (approvedAppIds.length > 0) {
+    const adminSupabase2 = createAdminClient()
+    const { data: relatedLoans } = await adminSupabase2
+      .from('loans').select('id, application_id').in('application_id', approvedAppIds)
+    ;(relatedLoans ?? []).forEach((l: any) => { loanByAppId[l.application_id] = l.id })
   }
 
   const counts = { submitted: 0, approved: 0, rejected: 0 }
@@ -118,6 +131,9 @@ export default async function AdminApplications() {
                         {showActions
                           ? <ApplicationActions id={app.id} clientName={profile.full_name ?? 'Client'} clientPhone={profile.phone ?? ''} amount={app.requested_amount} term={app.requested_term_months} status={app.status} />
                           : <span className="text-xs text-slate-400">{app.review_notes?.slice(0,40) || 'Processed'}</span>}
+                        {app.status === 'approved' && loanByAppId[app.id] && (
+                          <PaymentSection loanId={loanByAppId[app.id]} />
+                        )}
                       </td>
                     </tr>
                   )

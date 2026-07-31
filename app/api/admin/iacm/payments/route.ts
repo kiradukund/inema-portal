@@ -29,11 +29,11 @@ export async function POST(req: NextRequest) {
     const newPrincipalRepaid = Number(loan.principal_repaid ?? 0) + principalPortion
 
     // 1. Record the payment
-    const { error: payErr } = await supabase.from('iacm_payments').insert({
+    const { data: paymentRow, error: payErr } = await supabase.from('iacm_payments').insert({
       loan_id, payment_date, total_amount: paid,
       interest_portion: interestPortion, principal_portion: principalPortion,
       fee_portion: feePortion, payment_method, notes,
-    })
+    }).select().single()
     if (payErr) return serverError(payErr)
 
     // 2. Update loan outstanding balance
@@ -56,22 +56,41 @@ export async function POST(req: NextRequest) {
     //
     // iacm_journal_entries is a flat table (each row is one debit/credit
     // line, not a header+lines pair) — multiple rows sharing `reference`
-    // form one balanced transaction. Account codes/names here match
-    // Devotha's real chart of accounts, not the placeholder codes in
-    // lib/ledger.ts.
+    // form one balanced transaction, keyed by this payment's own id so
+    // separate installments on the same loan don't collide into one
+    // indistinguishable transaction.
+    //
+    // Only the interest/fee portion is posted here — principal is
+    // deliberately left out. iacm_loans.balance_outstanding is already the
+    // source of truth for outstanding loan principal (see bnr-report.ts's
+    // own exclusion of 3110 from its asset sum for the same reason); crediting
+    // 3110 here too, with nothing ever debiting it on disbursement, would
+    // make its ledger balance drift ever-downward and double-count the same
+    // loans two different ways.
     try {
       const clientName = (loan as any).iacm_clients?.full_name ?? loan.loan_number
       const narration = `Loan repayment — ${clientName}`
-      const lines = [
-        { entry_date: payment_date, account_code: '3020', account_name: 'Bank Accounts', debit: paid, credit: 0, description: narration, reference: loan.loan_number },
-        { entry_date: payment_date, account_code: '3110', account_name: 'Loan issued', debit: 0, credit: principalPortion, description: narration, reference: loan.loan_number },
-        { entry_date: payment_date, account_code: '7010', account_name: 'Interest Income on Loans', debit: 0, credit: interestPortion, description: narration, reference: loan.loan_number },
-      ]
-      if (feePortion > 0) {
-        lines.push({ entry_date: payment_date, account_code: '7020', account_name: 'Fees & Commission Income', debit: 0, credit: feePortion, description: narration, reference: loan.loan_number })
+      const reference = `payment-${paymentRow.id}`
+      const incomeAmount = interestPortion + feePortion
+      if (incomeAmount > 0) {
+        // Route to Cash on Hand or Bank Accounts based on how it was
+        // actually collected — previously this always hit Bank Accounts
+        // even for cash payments, corrupting the Cash-vs-Bank split.
+        const cashAccount = payment_method === 'cash'
+          ? { code: '3010', name: 'Cash on Hand' }
+          : { code: '3020', name: 'Bank Accounts' }
+        const lines = [
+          { entry_date: payment_date, account_code: cashAccount.code, account_name: cashAccount.name, debit: incomeAmount, credit: 0, description: narration, reference },
+        ]
+        if (interestPortion > 0) {
+          lines.push({ entry_date: payment_date, account_code: '7010', account_name: 'Interest Income on Loans', debit: 0, credit: interestPortion, description: narration, reference })
+        }
+        if (feePortion > 0) {
+          lines.push({ entry_date: payment_date, account_code: '7020', account_name: 'Fees & Commission Income', debit: 0, credit: feePortion, description: narration, reference })
+        }
+        const { error: journalErr } = await supabase.from('iacm_journal_entries').insert(lines)
+        if (journalErr) console.error('Journal auto-entry failed (non-fatal):', journalErr)
       }
-      const { error: journalErr } = await supabase.from('iacm_journal_entries').insert(lines)
-      if (journalErr) console.error('Journal auto-entry failed (non-fatal):', journalErr)
     } catch (journalErr) {
       console.error('Journal auto-entry failed (non-fatal):', journalErr)
     }

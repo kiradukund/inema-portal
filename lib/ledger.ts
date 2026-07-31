@@ -9,30 +9,34 @@ export interface Account {
   normalSide: NormalSide
 }
 
-// Chart of accounts for the non-loan balance sheet lines. Loan portfolio,
-// interest receivable accrual and income-statement flows stay derived
-// directly from iacm_loans/iacm_payments/iacm_expenses — these accounts
-// exist so cash, fixed assets, payables, equity and borrowings have a real
-// ledger instead of hardcoded constants.
+// Chart of accounts, reconciled to Devotha's real bookkeeping codes (found
+// in the actual journal export, public/journal_template.xlsx — these are
+// not invented placeholders). Loan portfolio and income-statement flows
+// still stay derived directly from iacm_loans/iacm_payments/iacm_expenses,
+// NOT from 3110/6xxx/7xxx here — 3110 ("Loan issued") is tracked as a
+// balance-sheet opening position only (see getAccountBalance callers, which
+// deliberately exclude it from their own asset sums to avoid double-
+// counting the same loan portfolio that iacm_loans already represents).
 export const CHART_OF_ACCOUNTS: Account[] = [
-  { code: '3010', name: 'Cash in Vault', category: 'asset', normalSide: 'debit' },
-  { code: '3020', name: 'Cash at Bank', category: 'asset', normalSide: 'debit' },
-  { code: '3030', name: 'Interest Receivable', category: 'asset', normalSide: 'debit' },
+  { code: '3010', name: 'Cash on Hand', category: 'asset', normalSide: 'debit' },
+  { code: '3020', name: 'Bank Accounts', category: 'asset', normalSide: 'debit' },
+  { code: '3030', name: 'Accounts Receivable — Interest and Fees', category: 'asset', normalSide: 'debit' },
   { code: '3040', name: 'Other Receivables', category: 'asset', normalSide: 'debit' },
   { code: '3050', name: 'Prepaid Expenses', category: 'asset', normalSide: 'debit' },
-  { code: '3060', name: 'Caution & Deposits', category: 'asset', normalSide: 'debit' },
-  { code: '3210', name: 'Fixed Assets (Net)', category: 'asset', normalSide: 'debit' },
-  { code: '4010', name: 'PAYE Payable', category: 'liability', normalSide: 'credit' },
-  { code: '4020', name: 'RSSB Pension Payable', category: 'liability', normalSide: 'credit' },
-  { code: '4030', name: 'Maternity Payable', category: 'liability', normalSide: 'credit' },
-  { code: '4040', name: 'CBHI Payable', category: 'liability', normalSide: 'credit' },
-  { code: '4050', name: 'Other Liabilities', category: 'liability', normalSide: 'credit' },
-  { code: '4110', name: 'Borrowings — Shareholders', category: 'liability', normalSide: 'credit' },
-  { code: '4120', name: 'Borrowings — Related Parties', category: 'liability', normalSide: 'credit' },
-  { code: '4130', name: 'Borrowings — Banks/MFIs', category: 'liability', normalSide: 'credit' },
-  { code: '4140', name: 'Borrowings — Other', category: 'liability', normalSide: 'credit' },
-  { code: '5010', name: 'Share Capital', category: 'equity', normalSide: 'credit' },
-  { code: '5020', name: 'Retained Earnings', category: 'equity', normalSide: 'credit' },
+  { code: '3060', name: 'Caution', category: 'asset', normalSide: 'debit' },
+  { code: '3110', name: 'Loan Issued', category: 'asset', normalSide: 'debit' },
+  { code: '3210', name: 'Property, Plant & Equipment', category: 'asset', normalSide: 'debit' },
+  { code: '3220', name: 'Accumulated Depreciation', category: 'asset', normalSide: 'credit' }, // contra-asset
+  { code: '2030', name: "Shareholders' Loan — Long Term", category: 'liability', normalSide: 'credit' },
+  { code: '2530', name: 'VAT Control Account', category: 'liability', normalSide: 'credit' },
+  { code: '2540', name: 'PAYE Payables', category: 'liability', normalSide: 'credit' },
+  { code: '2550', name: 'Maternity Contribution Payables', category: 'liability', normalSide: 'credit' },
+  { code: '2560', name: 'Pension and Risk Contribution Payables', category: 'liability', normalSide: 'credit' },
+  { code: '2570', name: 'CBHI Payables', category: 'liability', normalSide: 'credit' },
+  { code: '2580', name: 'Salary Payables', category: 'liability', normalSide: 'credit' },
+  { code: '2640', name: 'Tax Payable', category: 'liability', normalSide: 'credit' },
+  { code: '1010', name: 'Ordinary Share Capital', category: 'equity', normalSide: 'credit' },
+  { code: '1050', name: 'Retained Earnings', category: 'equity', normalSide: 'credit' },
 ]
 
 export function accountByCode(code: string): Account | undefined {

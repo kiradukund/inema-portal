@@ -2,26 +2,28 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-// Kept in sync with lib/ledger.ts CHART_OF_ACCOUNTS.
+// Kept in sync with lib/ledger.ts CHART_OF_ACCOUNTS — real codes from
+// Devotha's own bookkeeping (public/journal_template.xlsx), not placeholders.
 const ACCOUNTS = [
-  { code: '3010', name: 'Cash in Vault' },
-  { code: '3020', name: 'Cash at Bank' },
-  { code: '3030', name: 'Interest Receivable' },
+  { code: '3010', name: 'Cash on Hand' },
+  { code: '3020', name: 'Bank Accounts' },
+  { code: '3030', name: 'Accounts Receivable — Interest and Fees' },
   { code: '3040', name: 'Other Receivables' },
   { code: '3050', name: 'Prepaid Expenses' },
-  { code: '3060', name: 'Caution & Deposits' },
-  { code: '3210', name: 'Fixed Assets (Net)' },
-  { code: '4010', name: 'PAYE Payable' },
-  { code: '4020', name: 'RSSB Pension Payable' },
-  { code: '4030', name: 'Maternity Payable' },
-  { code: '4040', name: 'CBHI Payable' },
-  { code: '4050', name: 'Other Liabilities' },
-  { code: '4110', name: 'Borrowings — Shareholders' },
-  { code: '4120', name: 'Borrowings — Related Parties' },
-  { code: '4130', name: 'Borrowings — Banks/MFIs' },
-  { code: '4140', name: 'Borrowings — Other' },
-  { code: '5010', name: 'Share Capital' },
-  { code: '5020', name: 'Retained Earnings' },
+  { code: '3060', name: 'Caution' },
+  { code: '3110', name: 'Loan Issued' },
+  { code: '3210', name: 'Property, Plant & Equipment' },
+  { code: '3220', name: 'Accumulated Depreciation' },
+  { code: '2030', name: "Shareholders' Loan — Long Term" },
+  { code: '2530', name: 'VAT Control Account' },
+  { code: '2540', name: 'PAYE Payables' },
+  { code: '2550', name: 'Maternity Contribution Payables' },
+  { code: '2560', name: 'Pension and Risk Contribution Payables' },
+  { code: '2570', name: 'CBHI Payables' },
+  { code: '2580', name: 'Salary Payables' },
+  { code: '2640', name: 'Tax Payable' },
+  { code: '1010', name: 'Ordinary Share Capital' },
+  { code: '1050', name: 'Retained Earnings' },
 ]
 
 type Line = { account_code: string; side: 'debit' | 'credit'; amount: string }

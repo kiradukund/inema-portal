@@ -343,9 +343,9 @@ export async function generateBnrReport(quarter: string): Promise<Buffer> {
   // end). null means the account has no opening balance row and no journal
   // entries yet — genuinely untracked, so that FS row stays blank rather
   // than showing a misleading zero.
-  const ASSET_CODES = ['3010', '3020', '3030', '3040', '3050', '3060', '3210']
-  const LIABILITY_CODES = ['4010', '4020', '4030', '4040', '4050', '4110', '4120', '4130', '4140']
-  const EQUITY_CODES = ['5010', '5020']
+  const ASSET_CODES = ['3010', '3020', '3030', '3040', '3050', '3060', '3210', '3220']
+  const LIABILITY_CODES = ['2030', '2530', '2540', '2550', '2560', '2570', '2580', '2640']
+  const EQUITY_CODES = ['1010', '1050']
   const allLedgerCodes = [...ASSET_CODES, ...LIABILITY_CODES, ...EQUITY_CODES]
   const ledgerValues = await Promise.all(allLedgerCodes.map(code => getAccountBalance(code, qEnd)))
   const ledger: Record<string, number | null> = {}
@@ -373,6 +373,11 @@ export async function generateBnrReport(quarter: string): Promise<Buffer> {
   const totalExpensesThisQuarter = sumBy(expensesThisQuarter, e => Number(e.amount ?? 0))
   const profitForPeriod = interestIncome + feesIncome - totalExpensesThisQuarter
 
+  // 3220 (Accumulated Depreciation) is a contra-asset — getAccountBalance
+  // already returns it as a positive number on its own (credit) normal
+  // side, so it's subtracted from gross PPE here, not added.
+  const netFixedAssets = ledger['3210'] !== null ? ledger['3210'] - (ledger['3220'] ?? 0) : null
+
   const totalLiabilities = sumIfAny(LIABILITY_CODES)
   const totalEquityLedgerOnly = sumIfAny(EQUITY_CODES)
   const totalEquity = totalEquityLedgerOnly !== null ? totalEquityLedgerOnly + profitForPeriod : null
@@ -380,7 +385,11 @@ export async function generateBnrReport(quarter: string): Promise<Buffer> {
   // Net loans (not gross) roll into total assets — gross loans and loan loss
   // provisions are informational rows only, matching standard balance-sheet
   // convention (and the original BNR template's own total-assets formula).
-  const assetRows: (number | null)[] = [ledger['3010'], ledger['3020'], null, netLoans, ledger['3210'], ledger['3030'], sumIfAny(['3040', '3050', '3060'])]
+  // Loan Issued (3110) is deliberately excluded from this ledger sum —
+  // iacm_loans is already the source of truth for the live loan portfolio
+  // (netLoans, above); including 3110 too would double-count the same
+  // loans under two different sources.
+  const assetRows: (number | null)[] = [ledger['3010'], ledger['3020'], null, netLoans, netFixedAssets, ledger['3030'], sumIfAny(['3040', '3050', '3060'])]
   const totalAssets = assetRows.some(v => v !== null) ? assetRows.reduce((s: number, v) => s + (v ?? 0), 0) : null
 
   const totalEquityAndLiabilities = (totalLiabilities !== null || totalEquity !== null)
@@ -395,17 +404,17 @@ export async function generateBnrReport(quarter: string): Promise<Buffer> {
     'Loan Loss Provisions': loanLossProvisions,
     'Net Loans': netLoans,
     'NPLs': nplBalance,
-    'Fixed Assets (Gross)': null,
-    'Accumulated Depreciation': null,
-    'Net Fixed Assets': ledger['3210'],
+    'Fixed Assets (Gross)': ledger['3210'],
+    'Accumulated Depreciation': ledger['3220'],
+    'Net Fixed Assets': netFixedAssets,
     'Interest Receivable': ledger['3030'],
     'Other Assets': sumIfAny(['3040', '3050', '3060']),
     'TOTAL ASSETS': totalAssets,
     'Total Liabilities': totalLiabilities,
     'Total Equity': totalEquity,
-    'Retained Profits': ledger['5020'],
+    'Retained Profits': ledger['1050'],
     'Profit for Period': profitForPeriod,
-    'Paid-up Capital': ledger['5010'],
+    'Paid-up Capital': ledger['1010'],
     'Total Equity & Liabilities': totalEquityAndLiabilities,
   }
 

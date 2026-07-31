@@ -161,9 +161,13 @@ export default async function AdminDashboard() {
     .sort((a, b) => new Date(a.maturity_date).getTime() - new Date(b.maturity_date).getTime())
 
   // ── Historical performance (hardcoded BNR figures + live row) ───────────
+  // 3220 (Accumulated Depreciation) is a contra-asset — getAccountBalance
+  // returns it as a positive number on its own (credit) normal side, so it
+  // must be subtracted here, not summed in with everything else.
   const ASSET_ACCOUNT_CODES = ['3010', '3020', '3030', '3040', '3050', '3060', '3210']
   const assetBalances = await Promise.all(ASSET_ACCOUNT_CODES.map(code => getAccountBalance(code, today)))
-  const ledgerAssets = assetBalances.reduce((s: number, v) => s + (v ?? 0), 0)
+  const accumulatedDepreciation = await getAccountBalance('3220', today)
+  const ledgerAssets = assetBalances.reduce((s: number, v) => s + (v ?? 0), 0) - (accumulatedDepreciation ?? 0)
   const liveTotalAssets = ledgerAssets + totalOutstanding
 
   const historicalRows = [

@@ -1,28 +1,47 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient } from '@/lib/supabase'
 
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+
+const CATEGORY_LABELS: Record<string, string> = {
+  personnel: 'Personnel Expenses (Salaries, PAYE, RSSB)',
+  rent: 'Rent & Utilities',
+  bank_charges: 'Bank Charges & Commissions',
+  communication: 'Communication & Internet',
+  stationery: 'Office Stationery & Supplies',
+  transport: 'Transport & Travel',
+  advertising: 'Advertising & Marketing',
+  legal: 'Legal & Professional Fees',
+  maintenance: 'Maintenance & Repairs',
+  petty_cash: 'Petty Cash / Miscellaneous',
+  tax: 'Tax Payments (PAYE, RSSB, CBHI)',
+  depreciation: 'Depreciation',
+  other: 'Other Operating Expenses',
+}
+
 export default async function AdminIncome() {
   await requireAdmin()
   const supabase = await createServerSupabaseClient()
-  const { data: loans } = await supabase.from('imported_loans').select('*')
-  const allLoans = loans ?? []
 
-  const months = [
-    { key: '2025-07', label: 'Jul 2025' }, { key: '2025-08', label: 'Aug 2025' },
-    { key: '2025-09', label: 'Sep 2025' }, { key: '2025-10', label: 'Oct 2025' },
-    { key: '2025-11', label: 'Nov 2025' }, { key: '2025-12', label: 'Dec 2025' },
-    { key: '2026-01', label: 'Jan 2026' }, { key: '2026-02', label: 'Feb 2026' },
-    { key: '2026-03', label: 'Mar 2026' }, { key: '2026-04', label: 'Apr 2026' },
-    { key: '2026-05', label: 'May 2026' }, { key: '2026-06', label: 'Jun 2026' },
-  ]
+  const [
+    { data: importedLoans },
+    { data: iacmPayments },
+    { data: iacmExpenses },
+    { data: iacmLoans },
+  ] = await Promise.all([
+    supabase.from('imported_loans').select('*'),
+    supabase.from('iacm_payments').select('total_amount, interest_portion, fee_portion, payment_date'),
+    supabase.from('iacm_expenses').select('amount, expense_date, category'),
+    supabase.from('iacm_loans').select('disbursed_amount, balance_outstanding, status'),
+  ])
 
-  const staticExpenses: Record<string, number> = {
-    '2025-07': 999500, '2025-08': 608753, '2025-09': 533158,
-    '2025-10': 549658, '2025-11': 533658, '2025-12': 533658,
-    '2026-01': 533658, '2026-02': 533658, '2026-03': 533658,
-    '2026-04': 533658, '2026-05': 533658, '2026-06': 533658,
-  }
+  const allLoans = importedLoans ?? []
+  const allPayments = iacmPayments ?? []
+  const allExpenses = iacmExpenses ?? []
+  const allIacmLoans = iacmLoans ?? []
 
+  // Legacy Excel-imported loans compute income the old way (rate implied by
+  // status/amount_paid ratio, no direct payment records exist for these).
   const calcLoanIncome = (loan: { principal: number; term_months: number; total_due: number; amount_paid: number; status: string }) => {
     const p = loan.principal ?? 0
     const m = loan.term_months ?? 1
@@ -36,10 +55,12 @@ export default async function AdminIncome() {
   }
 
   const incomeByMonth: Record<string, { interest: number; fees: number; vat: number; total: number }> = {}
+  const touch = (mk: string) => { if (!incomeByMonth[mk]) incomeByMonth[mk] = { interest: 0, fees: 0, vat: 0, total: 0 } }
+
   for (const loan of allLoans) {
     if (!loan.date_offered) continue
     const mk = loan.date_offered.substring(0, 7)
-    if (!incomeByMonth[mk]) incomeByMonth[mk] = { interest: 0, fees: 0, vat: 0, total: 0 }
+    touch(mk)
     const inc = calcLoanIncome(loan)
     incomeByMonth[mk].interest += inc.interest
     incomeByMonth[mk].fees += inc.fee
@@ -47,17 +68,56 @@ export default async function AdminIncome() {
     incomeByMonth[mk].total += inc.total
   }
 
+  // Real, going-forward income: actual payments recorded through the IACM module.
+  for (const p of allPayments) {
+    const mk = (p.payment_date ?? '').slice(0, 7)
+    if (!mk) continue
+    touch(mk)
+    incomeByMonth[mk].interest += Number(p.interest_portion ?? 0)
+    incomeByMonth[mk].fees += Number(p.fee_portion ?? 0)
+    incomeByMonth[mk].total += Number(p.total_amount ?? 0)
+  }
+
+  const expensesByMonth: Record<string, number> = {}
+  for (const e of allExpenses) {
+    const mk = (e.expense_date ?? '').slice(0, 7)
+    if (!mk) continue
+    expensesByMonth[mk] = (expensesByMonth[mk] ?? 0) + Number(e.amount ?? 0)
+  }
+
+  const thisMonthKey = new Date().toISOString().slice(0, 7)
+  const monthKeys = Array.from(new Set([...Object.keys(incomeByMonth), ...Object.keys(expensesByMonth), thisMonthKey])).sort()
+
   const totalGross = Object.values(incomeByMonth).reduce((s, v) => s + v.total, 0)
-  const totalExpenses = Object.values(staticExpenses).reduce((s, v) => s + v, 0)
+  const totalExpenses = Object.values(expensesByMonth).reduce((s, v) => s + v, 0)
   const netProfit = totalGross - totalExpenses
-  const totalDisbursed = allLoans.reduce((s, l) => s + (l.principal ?? 0), 0)
-  const totalOutstanding = allLoans.filter(l => l.status !== 'paid').reduce((s, l) => s + Math.max(0, (l.total_due ?? 0) - (l.amount_paid ?? 0)), 0)
+  const totalDisbursed =
+    allLoans.reduce((s, l) => s + (l.principal ?? 0), 0) +
+    allIacmLoans.reduce((s, l) => s + Number(l.disbursed_amount ?? 0), 0)
+  const totalOutstanding =
+    allLoans.filter(l => l.status !== 'paid').reduce((s, l) => s + Math.max(0, (l.total_due ?? 0) - (l.amount_paid ?? 0)), 0) +
+    allIacmLoans.reduce((s, l) => s + Number(l.balance_outstanding ?? 0), 0)
+  const activeLoanCount =
+    allLoans.filter(l => l.status !== 'paid').length +
+    allIacmLoans.filter(l => l.status === 'active').length
+
+  const expenseCategoryTotals: Record<string, number> = {}
+  for (const e of allExpenses) {
+    const cat = e.category ?? 'other'
+    expenseCategoryTotals[cat] = (expenseCategoryTotals[cat] ?? 0) + Number(e.amount ?? 0)
+  }
+  const categoryRows = Object.entries(expenseCategoryTotals).sort((a, b) => b[1] - a[1])
+
+  function monthLabel(key: string): string {
+    const [y, m] = key.split('-').map(Number)
+    return `${MONTH_NAMES[m - 1]} ${y}`
+  }
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-800">Income & P&L Report</h1>
-        <p className="text-slate-500 text-sm mt-1">July 2025 — Present · INEMA Financial Solutions Ltd</p>
+        <p className="text-slate-500 text-sm mt-1">Live figures from recorded loans, payments and expenses — INEMA Financial Solutions Ltd</p>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -90,20 +150,20 @@ export default async function AdminIncome() {
                 </tr>
               </thead>
               <tbody>
-                {months.map(m => {
-                  const inc = incomeByMonth[m.key] ?? { interest: 0, fees: 0, vat: 0, total: 0 }
-                  const exp = staticExpenses[m.key] ?? 0
+                {monthKeys.map(mk => {
+                  const inc = incomeByMonth[mk] ?? { interest: 0, fees: 0, vat: 0, total: 0 }
+                  const exp = expensesByMonth[mk] ?? 0
                   const net = inc.total - exp
                   return (
-                    <tr key={m.key} className="border-b border-slate-50 hover:bg-slate-50">
-                      <td className="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">{m.label}</td>
+                    <tr key={mk} className="border-b border-slate-50 hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium text-slate-700 whitespace-nowrap">{monthLabel(mk)}</td>
                       <td className="px-3 py-2 text-slate-600">{inc.interest > 0 ? formatRWF(inc.interest) : '—'}</td>
                       <td className="px-3 py-2 text-slate-600">{inc.fees > 0 ? formatRWF(inc.fees) : '—'}</td>
                       <td className="px-3 py-2 text-slate-600">{inc.vat > 0 ? formatRWF(inc.vat) : '—'}</td>
                       <td className="px-3 py-2 font-semibold text-green-700">{inc.total > 0 ? formatRWF(inc.total) : '—'}</td>
-                      <td className="px-3 py-2 text-red-600">{formatRWF(exp)}</td>
+                      <td className="px-3 py-2 text-red-600">{exp > 0 ? formatRWF(exp) : '—'}</td>
                       <td className={`px-3 py-2 font-bold ${net >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-                        {net >= 0 ? formatRWF(net) : `(${formatRWF(Math.abs(net))})`}
+                        {net !== 0 ? (net >= 0 ? formatRWF(net) : `(${formatRWF(Math.abs(net))})`) : '—'}
                       </td>
                     </tr>
                   )
@@ -127,24 +187,15 @@ export default async function AdminIncome() {
             <h2 className="font-bold text-slate-800">Expense Categories</h2>
           </div>
           <div className="p-4 space-y-3">
-            {[
-              { label: 'Staff Wages (net)', amount: 3213850, note: '~RWF 321,385/mo × 10' },
-              { label: 'PAYE/TPR', amount: 1140000, note: '~RWF 114,000/mo' },
-              { label: 'RSSB (employer)', amount: 415000, note: 'Pension + maternity' },
-              { label: 'Rent', amount: 942000, note: 'Jul 2025 annual' },
-              { label: 'Network/Internet', amount: 264000, note: 'RWF 24,000/mo' },
-              { label: 'Notaire', amount: 100000, note: 'RWF 10,000/mo' },
-              { label: 'Electricity', amount: 55000, note: 'RWF 5,000/mo' },
-              { label: 'Isuku/Cleaning', amount: 121000, note: 'RWF 11,000/mo' },
-              { label: 'Bank Charges', amount: 82500, note: 'Variable' },
-              { label: 'RRA Penalties', amount: 75753, note: 'One-time Aug 2025' },
-            ].sort((a,b)=>b.amount-a.amount).map(exp => {
-              const pct = Math.round((exp.amount / totalExpenses) * 100)
+            {categoryRows.length === 0 ? (
+              <div className="text-center text-slate-400 text-sm py-6">No expenses recorded yet</div>
+            ) : categoryRows.map(([cat, amount]) => {
+              const pct = Math.round((amount / totalExpenses) * 100)
               return (
-                <div key={exp.label}>
+                <div key={cat}>
                   <div className="flex justify-between mb-1">
-                    <span className="text-sm text-slate-700">{exp.label} <span className="text-xs text-slate-400">{exp.note}</span></span>
-                    <span className="text-sm font-semibold text-slate-800">{formatRWF(exp.amount)} <span className="text-xs text-slate-400">{pct}%</span></span>
+                    <span className="text-sm text-slate-700">{CATEGORY_LABELS[cat] ?? cat}</span>
+                    <span className="text-sm font-semibold text-slate-800">{formatRWF(amount)} <span className="text-xs text-slate-400">{pct}%</span></span>
                   </div>
                   <div className="w-full bg-slate-100 rounded-full h-1.5">
                     <div className="bg-amber-500 h-1.5 rounded-full" style={{width:`${pct}%`}} />
@@ -158,10 +209,9 @@ export default async function AdminIncome() {
 
       <div className="bg-slate-900 rounded-xl p-6 text-white">
         <p className="text-amber-400 text-xs font-semibold uppercase tracking-widest mb-4">Outstanding Portfolio</p>
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <div><p className="text-slate-400 text-sm">Total Outstanding</p><p className="text-2xl font-bold text-amber-400 mt-1">{formatRWF(totalOutstanding)}</p><p className="text-slate-500 text-xs mt-1">Money still owed to INEMA</p></div>
-          <div><p className="text-slate-400 text-sm">Active Loans</p><p className="text-2xl font-bold text-white mt-1">{allLoans.filter(l=>l.status!=='paid').length}</p><p className="text-slate-500 text-xs mt-1">Currently running</p></div>
-          <div><p className="text-slate-400 text-sm">Est. Future Income</p><p className="text-2xl font-bold text-green-400 mt-1">{formatRWF(totalOutstanding * 0.09)}</p><p className="text-slate-500 text-xs mt-1">On outstanding balance</p></div>
+          <div><p className="text-slate-400 text-sm">Active Loans</p><p className="text-2xl font-bold text-white mt-1">{activeLoanCount}</p><p className="text-slate-500 text-xs mt-1">Currently running</p></div>
         </div>
       </div>
     </div>

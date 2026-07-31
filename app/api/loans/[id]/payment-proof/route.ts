@@ -1,9 +1,7 @@
 import { NextRequest } from 'next/server'
 import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
 import { ok, err, unauthorized, forbidden, serverError } from '@/lib/api'
-
-const MAX_FILE_BYTES = 10 * 1024 * 1024
-const ALLOWED_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'])
+import { isAllowedUpload, UPLOAD_REJECT_MESSAGE } from '@/lib/file-validation'
 
 // POST /api/loans/[id]/payment-proof — client uploads proof of a payment
 // against their own portal loan. Runs through the service-role client
@@ -30,13 +28,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const notes = formData.get('notes')
 
     if (!(file instanceof File)) return err('No file provided')
-    if (file.size > MAX_FILE_BYTES) return err('File is too large (max 10MB)')
-    if (!ALLOWED_TYPES.has(file.type)) return err('File must be a PDF or image (JPG/PNG)')
     if (!amount || !paymentDate) return err('Amount and payment date are required')
+
+    const buffer = Buffer.from(await file.arrayBuffer())
+    if (!isAllowedUpload(buffer, file.size)) return err(UPLOAD_REJECT_MESSAGE)
 
     const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
     const path = `${user.id}/payments/${loanId}/${Date.now()}_${safeName}`
-    const buffer = Buffer.from(await file.arrayBuffer())
 
     const { error: uploadErr } = await adminSupabase.storage
       .from('loan-documents')

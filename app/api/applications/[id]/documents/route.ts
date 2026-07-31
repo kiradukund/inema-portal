@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server'
 import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
 import { ok, err, unauthorized, forbidden, serverError } from '@/lib/api'
+import { isAllowedUpload, UPLOAD_REJECT_MESSAGE } from '@/lib/file-validation'
 
 // Field name in the multipart form -> human label stored alongside the path.
 const DOC_LABELS: Record<string, string> = {
@@ -10,8 +11,6 @@ const DOC_LABELS: Record<string, string> = {
   employment_file: 'Employment Letter',
   marital_file: 'Marital Certificate',
 }
-const MAX_FILE_BYTES = 10 * 1024 * 1024
-const ALLOWED_TYPES = new Set(['application/pdf', 'image/jpeg', 'image/png', 'image/jpg'])
 
 // POST /api/applications/[id]/documents — client uploads their own loan
 // application documents. Runs entirely through the service-role client:
@@ -38,12 +37,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     for (const [fieldKey, label] of Object.entries(DOC_LABELS)) {
       const file = formData.get(fieldKey)
       if (!(file instanceof File)) continue
-      if (file.size > MAX_FILE_BYTES) return err(`${label} is too large (max 10MB)`)
-      if (!ALLOWED_TYPES.has(file.type)) return err(`${label} must be a PDF or image (JPG/PNG)`)
+
+      const buffer = Buffer.from(await file.arrayBuffer())
+      if (!isAllowedUpload(buffer, file.size)) return err(`${label}: ${UPLOAD_REJECT_MESSAGE}`)
 
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
       const path = `${user.id}/${id}/${fieldKey}-${Date.now()}-${safeName}`
-      const buffer = Buffer.from(await file.arrayBuffer())
 
       const { error: uploadErr } = await adminSupabase.storage
         .from('loan-documents')

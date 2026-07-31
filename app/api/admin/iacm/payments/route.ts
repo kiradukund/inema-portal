@@ -13,7 +13,7 @@ export async function POST(req: NextRequest) {
 
     // Get loan details
     const { data: loan, error: loanErr } = await supabase
-      .from('iacm_loans').select('*').eq('id', loan_id).single()
+      .from('iacm_loans').select('*, iacm_clients(full_name)').eq('id', loan_id).single()
     if (loanErr || !loan) return err('Loan not found', 404)
 
     const outstanding = Number(loan.balance_outstanding)
@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
     const monthlyInterest = disbursed * 0.05
     const interestPortion = Math.min(paid, monthlyInterest)
     const principalPortion = Math.max(0, paid - interestPortion)
+    const feePortion = 0 // not currently charged on manual IACM payments
     const newBalance = Math.max(0, outstanding - principalPortion)
     const newPrincipalRepaid = Number(loan.principal_repaid ?? 0) + principalPortion
 
@@ -31,7 +32,7 @@ export async function POST(req: NextRequest) {
     const { error: payErr } = await supabase.from('iacm_payments').insert({
       loan_id, payment_date, total_amount: paid,
       interest_portion: interestPortion, principal_portion: principalPortion,
-      fee_portion: 0, payment_method, notes,
+      fee_portion: feePortion, payment_method, notes,
     })
     if (payErr) return serverError(payErr)
 
@@ -47,6 +48,33 @@ export async function POST(req: NextRequest) {
       updated_at: new Date().toISOString(),
     }).eq('id', loan_id)
     if (updateErr) return serverError(updateErr)
+
+    // 3. Auto-post the journal entry for this payment. Non-fatal: the
+    // payment itself is already recorded above, so a journal-side failure
+    // shouldn't undo it — Devotha can always enter it manually if this
+    // silently fails, and the error is logged either way.
+    //
+    // iacm_journal_entries is a flat table (each row is one debit/credit
+    // line, not a header+lines pair) — multiple rows sharing `reference`
+    // form one balanced transaction. Account codes/names here match
+    // Devotha's real chart of accounts, not the placeholder codes in
+    // lib/ledger.ts.
+    try {
+      const clientName = (loan as any).iacm_clients?.full_name ?? loan.loan_number
+      const narration = `Loan repayment — ${clientName}`
+      const lines = [
+        { entry_date: payment_date, account_code: '3020', account_name: 'Bank Accounts', debit: paid, credit: 0, description: narration, reference: loan.loan_number },
+        { entry_date: payment_date, account_code: '3110', account_name: 'Loan issued', debit: 0, credit: principalPortion, description: narration, reference: loan.loan_number },
+        { entry_date: payment_date, account_code: '7010', account_name: 'Interest Income on Loans', debit: 0, credit: interestPortion, description: narration, reference: loan.loan_number },
+      ]
+      if (feePortion > 0) {
+        lines.push({ entry_date: payment_date, account_code: '7020', account_name: 'Fees & Commission Income', debit: 0, credit: feePortion, description: narration, reference: loan.loan_number })
+      }
+      const { error: journalErr } = await supabase.from('iacm_journal_entries').insert(lines)
+      if (journalErr) console.error('Journal auto-entry failed (non-fatal):', journalErr)
+    } catch (journalErr) {
+      console.error('Journal auto-entry failed (non-fatal):', journalErr)
+    }
 
     return ok({
       message: `Payment recorded. Interest: RWF ${interestPortion.toLocaleString()}, Principal: RWF ${principalPortion.toLocaleString()}, New balance: RWF ${newBalance.toLocaleString()}`,

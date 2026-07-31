@@ -1,18 +1,25 @@
-import fs from 'fs'
-import path from 'path'
 // @ts-ignore
 import ExcelJS from 'exceljs'
 import { createAdminClient } from './supabase'
 import { getAccountBalance } from './ledger'
 
-const TEMPLATE_PATH = path.join(process.cwd(), 'public', 'bnr_template.xlsx')
+// Built entirely from a fresh ExcelJS.Workbook() — no template file is ever
+// read. The prior approach (loading public/bnr_template.xlsx and modifying
+// it) kept triggering Excel's "we found a problem with some content" repair
+// dialog even after stripping the Excel Tables that caused it; a repair
+// warning on a document going to a financial regulator isn't something to
+// tolerate, so this version has zero inherited OOXML state to go wrong.
+// Scope note: this is a simplified 6-sheet balance-sheet-focused rebuild —
+// no income statement, no gender/sector supplementary stats, and no
+// Explanatory Note / Restructured / Written-Off sheets, unlike the real BNR
+// template or the previous template-based version of this file.
 
 const LOAN_SHEET_NAMES = {
   normal: 'A1.3. Normal Loans ',
-  watch: 'A1.4. Watch',
-  substandard: 'A1.5. Substandard',
-  doubtful: 'A1.6. Doubtful',
-  loss: 'A1.7 Loss',
+  watch: 'A1.4. Watch ',
+  substandard: 'A1.5. Substandard ',
+  doubtful: 'A1.6. Doubtful ',
+  loss: 'A1.7. Loss ',
 } as const
 
 const CLASS_INFO: Record<keyof typeof LOAN_SHEET_NAMES, { classNumber: number; provRate: number }> = {
@@ -23,109 +30,22 @@ const CLASS_INFO: Record<keyof typeof LOAN_SHEET_NAMES, { classNumber: number; p
   loss: { classNumber: 5, provRate: 1.0 },
 }
 
-// Maps the app's free-text economic sector choices to the 5 BNR-defined categories.
-const ECONOMIC_SECTOR_MAP: Record<string, 'agriculture' | 'publicWorks' | 'commerce' | 'transport' | 'others'> = {
-  'Agriculture': 'agriculture',
-  'Construction': 'publicWorks',
-  'Commerce & Trade': 'commerce',
-  'Transport': 'transport',
-  'Services': 'others',
-  'Education': 'others',
-  'Health': 'others',
-  'Other': 'others',
+const NAVY = 'FF001F5B'
+const WHITE = 'FFFFFFFF'
+const ZEBRA = 'FFF9F9F9'
+
+function applyHeaderStyle(cell: any) {
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }
+  cell.font = { color: { argb: WHITE }, bold: true, size: 10 }
+  cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }
 }
 
-// Column-header text -> semantic key. Order doesn't matter here since each
-// predicate is specific enough not to collide with the others.
-const COLUMN_MATCHERS: Array<[string, (t: string) => boolean]> = [
-  ['no', t => t === 'no'],
-  ['name', t => t.includes('names of borrowers')],
-  ['nationalId', t => t.includes('id of the borrower')],
-  ['phone', t => t.includes('telephone')],
-  ['gender', t => t === 'gender'],
-  ['age', t => t === 'age'],
-  ['relationship', t => t.includes('relationship with the ndfsp')],
-  ['marital', t => t.includes('marital status')],
-  ['prevLoansPaid', t => t.includes('previous loans paid')],
-  ['purpose', t => t.includes('purpose of the loan')],
-  ['branch', t => t.includes('branch name')],
-  ['collateralType', t => t === 'collateral type'],
-  ['collateralAmount', t => t.includes('guarantee')],
-  ['district', t => t.includes('district')],
-  ['sector', t => t.includes('sector')],
-  ['cell', t => t.includes('cell')],
-  ['village', t => t.includes('village')],
-  ['annualRate', t => t.includes('annual interest rate')],
-  ['method', t => t.includes('method of interest')],
-  ['officer', t => t.includes('loan officer')],
-  ['disbursedAmount', t => t.includes('disbursed amount')],
-  ['disbursementDate', t => t.includes('date of loan disbursement')],
-  ['maturityDate', t => t.includes('maturity date')],
-  ['freqDays', t => t.includes('frequency of repayment')],
-  ['gracePeriod', t => t.includes('grace period')],
-  ['firstPaymentDate', t => t.includes('date of first payment')],
-  ['lastPaymentDate', t => t.includes('date of last payment')],
-  ['arrearsStart', t => t.includes('arrears start')],
-  ['cutOffDate', t => t.includes('cut off date')],
-  ['totalInstallments', t => t.includes('total number of installments')],
-  ['installmentsPaid', t => t.includes('installments') && t.includes('paid')],
-  ['installmentsOutstanding', t => t.includes('installments outstanding')],
-  ['amountRepaid', t => t.includes('amount repaid')],
-  ['balanceOutstanding', t => t.includes('balance outstanding')],
-  ['eligibleCollateral', t => t.includes('eligible collateral')],
-  ['netAmountDue', t => t.includes('net amount due')],
-  ['daysOverdue', t => t.includes('days overdue')],
-  ['classCol', t => t === 'class'],
-  ['provRateCol', t => t.includes('provisioning rate')],
-  ['provRequired', t => t.includes('provision required')],
-  ['prevProvisions', t => t.includes('previous provisions')],
-  ['addlProvisions', t => t.includes('additional provisions')],
-]
-
-function norm(v: any): string {
-  return String(v ?? '').trim().toLowerCase()
-}
-
-function findHeaderRow(ws: any): number {
-  for (let r = 1; r <= 15; r++) {
-    for (let c = 1; c <= 3; c++) {
-      if (norm(ws.getRow(r).getCell(c).value) === 'names of borrowers') return r
-    }
+function applyZebraRow(row: any, colCount: number, rowIndexInData: number) {
+  const bg = rowIndexInData % 2 === 0 ? ZEBRA : WHITE
+  for (let c = 1; c <= colCount; c++) {
+    const cell = row.getCell(c)
+    if (!cell.fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } }
   }
-  throw new Error(`Could not find "Names of Borrowers" header row in sheet ${ws.name}`)
-}
-
-function findDataStartRow(ws: any, headerRow: number): number {
-  const next = norm(ws.getRow(headerRow + 1).getCell(1).value)
-  return next.startsWith('column') ? headerRow + 2 : headerRow + 1
-}
-
-function buildColumnMap(ws: any, headerRow: number): Record<string, number> {
-  const map: Record<string, number> = {}
-  const row = ws.getRow(headerRow)
-  for (let c = 1; c <= 60; c++) {
-    const text = norm(row.getCell(c).value)
-    if (!text) continue
-    for (const [key, test] of COLUMN_MATCHERS) {
-      if (map[key] !== undefined) continue
-      if (test(text)) { map[key] = c; break }
-    }
-  }
-  return map
-}
-
-function buildStyleTemplate(wb: any): Record<string, { style: any; numFmt: any }> {
-  const ws = wb.getWorksheet(LOAN_SHEET_NAMES.normal)
-  const headerRow = findHeaderRow(ws)
-  const dataStart = findDataStartRow(ws, headerRow)
-  const colMap = buildColumnMap(ws, headerRow)
-  const sampleRow = ws.getRow(dataStart)
-  const styles: Record<string, { style: any; numFmt: any }> = {}
-  for (const [key, colIdx] of Object.entries(colMap)) {
-    const cell = sampleRow.getCell(colIdx)
-    styles[key] = { style: JSON.parse(JSON.stringify(cell.style || {})), numFmt: cell.numFmt }
-  }
-  return styles
 }
 
 function getDaysOverdue(maturityDate: string, balance: number, today: Date): number {
@@ -141,35 +61,74 @@ function addDays(dateStr: string, days: number): Date {
   return d
 }
 
-function fillLoanSheet(
+// ── Loan classification sheets ────────────────────────────────────────────
+
+const LOAN_HEADERS = [
+  'No.', 'Names of Borrowers', 'National ID/Passport No.', 'Telephone No.', 'Gender', 'Age',
+  'Relationship with NDFSP', 'Marital Status', 'Previous Loans Paid on Time', 'Purpose of Loan',
+  'Branch', 'Type of Collateral', 'Amount of Collateral', 'District', 'Sector', 'Cell', 'Village',
+  'Annual Interest Rate', 'Interest Calculation Method', 'Loan Officer', 'Amount Disbursed',
+  'Date of Disbursement', 'Date of Maturity', 'Agreed Frequency of Repayment in Days',
+  'Grace Period in Days', 'Agreed Date of First Payment', 'Date of Last Payment',
+  'Date Arrears Started', 'Cut-Off Date', 'Total No. of Agreed Installments',
+  'No. of Installments Paid', 'No. of Installments Outstanding', 'Principal Repaid',
+  'Balance Outstanding', 'Eligible Collateral', 'Net Amount at Risk', 'Days in Arrears',
+  'Classification', 'Provision Rate', 'Provision Required', 'Previous Provisions',
+  'Additional Provisions Required',
+]
+
+// Same order as LOAN_HEADERS — index i's header is filled from values[LOAN_FIELD_KEYS[i]].
+const LOAN_FIELD_KEYS = [
+  'no', 'name', 'nationalId', 'phone', 'gender', 'age', 'relationship', 'marital', 'prevLoansPaid', 'purpose',
+  'branch', 'collateralType', 'collateralAmount', 'district', 'sector', 'cell', 'village', 'annualRate', 'method', 'officer',
+  'disbursedAmount', 'disbursementDate', 'maturityDate', 'freqDays', 'gracePeriod', 'firstPaymentDate', 'lastPaymentDate', 'arrearsStart', 'cutOffDate', 'totalInstallments',
+  'installmentsPaid', 'installmentsOutstanding', 'amountRepaid', 'balanceOutstanding', 'eligibleCollateral', 'netAmountDue', 'daysOverdue', 'classCol', 'provRateCol', 'provRequired',
+  'prevProvisions', 'addlProvisions',
+]
+
+const LOAN_COLUMN_WIDTHS = [
+  5, 22, 17, 13, 8, 6, 16, 12, 15, 20,
+  14, 15, 14, 12, 12, 12, 12, 10, 13, 18,
+  13, 13, 13, 14, 11, 14, 13, 13, 11, 12,
+  10, 10, 13, 15, 12, 14, 10, 10, 11, 14,
+  12, 14,
+]
+
+const HEADER_ROW = 10
+const DATA_START_ROW = 12
+
+function buildLoanSheet(
   wb: any,
-  styleTemplate: Record<string, { style: any; numFmt: any }>,
-  sheetKey: keyof typeof LOAN_SHEET_NAMES,
+  sheetName: string,
+  classInfo: { classNumber: number; provRate: number },
   loans: any[],
   reportDate: Date,
   today: Date
 ) {
-  const ws = wb.getWorksheet(LOAN_SHEET_NAMES[sheetKey])
-  const classInfo = CLASS_INFO[sheetKey]
-  const headerRow = findHeaderRow(ws)
-  const dataStart = findDataStartRow(ws, headerRow)
-  const colMap = buildColumnMap(ws, headerRow)
+  const ws = wb.addWorksheet(sheetName)
+  ws.views = [{ state: 'frozen', ySplit: HEADER_ROW }]
 
-  const clearEnd = Math.max(ws.rowCount, dataStart + loans.length + 5)
-  for (let r = dataStart; r <= clearEnd; r++) {
-    const row = ws.getRow(r)
-    for (const colIdx of Object.values(colMap)) row.getCell(colIdx).value = null
-  }
+  LOAN_COLUMN_WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w })
+
+  ws.getCell(2, 1).value = 'NDFSP Name: INEMA FINANCIAL SOLUTIONS Ltd'
+  ws.getCell(4, 1).value = `Report Name: Loan Classification Report (${sheetName.replace(/^A1\.\d\.\s*/, '').trim().toUpperCase()})`
+
+  const headerRow = ws.getRow(HEADER_ROW)
+  LOAN_HEADERS.forEach((h, i) => {
+    const cell = headerRow.getCell(i + 1)
+    cell.value = h
+    applyHeaderStyle(cell)
+  })
+  headerRow.height = 42
 
   loans.forEach((l, i) => {
-    const r = dataStart + i
+    const r = DATA_START_ROW + i
     const row = ws.getRow(r)
     const client = l.iacm_clients ?? {}
     const daysOverdue = Math.max(0, getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), today))
     const balance = Number(l.balance_outstanding ?? 0)
     const paid = l.installments_paid ?? null
     const outstanding = l.installments_outstanding ?? null
-
     const prevLoansPaidText: Record<string, string> = { yes: 'yes', no: 'no', not_applicable: 'not applicable' }
 
     const values: Record<string, any> = {
@@ -217,22 +176,64 @@ function fillLoanSheet(
       addlProvisions: Math.round(balance * classInfo.provRate),
     }
 
-    for (const [key, colIdx] of Object.entries(colMap)) {
-      if (!(key in values)) continue
-      const cell = row.getCell(colIdx)
-      cell.value = values[key]
-      const tmpl = styleTemplate[key]
-      if (tmpl) {
-        cell.style = tmpl.style
-        if (tmpl.numFmt) cell.numFmt = tmpl.numFmt
-      }
-    }
+    LOAN_FIELD_KEYS.forEach((key, idx) => {
+      const cell = row.getCell(idx + 1)
+      const v = values[key]
+      cell.value = v
+      if (typeof v === 'number') cell.numFmt = '#,##0'
+      else if (v instanceof Date) cell.numFmt = 'dd/mm/yyyy'
+    })
+    applyZebraRow(row, LOAN_HEADERS.length, i)
   })
 }
 
+// ── FS (balance sheet) sheet ───────────────────────────────────────────────
+
 const FS_SHEET_NAME = 'A1.2. FS'
 const FS_LABEL_COL = 3
-const FS_FIRST_QUARTER_COL = 4
+const FS_FIRST_QUARTER_COL = 4 // D
+const FS_QUARTER_COUNT = 5 // D..H, last one (H) is always the live/requested quarter
+
+const FS_ROW_LABELS = [
+  'Cash in Vault', 'Cash at Bank', 'Term Deposits', 'Gross Loans', 'Loan Loss Provisions',
+  'Net Loans', 'NPLs', 'Fixed Assets (Gross)', 'Accumulated Depreciation', 'Net Fixed Assets',
+  'Interest Receivable', 'Other Assets', 'TOTAL ASSETS', 'Total Liabilities', 'Total Equity',
+  'Retained Profits', 'Profit for Period', 'Paid-up Capital', 'Total Equity & Liabilities',
+]
+const FS_FIRST_ROW = 6
+const BOLD_ROWS = new Set(['TOTAL ASSETS', 'Total Equity & Liabilities'])
+
+// Real historical figures from the official BNR master file (as last filed),
+// keyed by the quarter label they belong to. Only line items that were
+// actually populated in that filing are included — everything else for a
+// historical quarter is left blank rather than guessed.
+const HISTORICAL_FS_DATA: Record<string, Partial<Record<string, number>>> = {
+  'Sep-25': {
+    'Cash at Bank': 9076162, 'Gross Loans': 20200000, 'Fixed Assets (Gross)': 2500000,
+    'Accumulated Depreciation': 0, 'Interest Receivable': 2138440, 'Other Assets': 535234,
+    'Paid-up Capital': 30000000,
+  },
+  'Dec-25': {
+    'Cash at Bank': 11440671, 'Gross Loans': 19924960, 'Fixed Assets (Gross)': 2500000,
+    'Accumulated Depreciation': 500000, 'Interest Receivable': 1405000,
+    'Paid-up Capital': 30000000,
+  },
+  'Mar-26': {
+    'Cash in Vault': 11500, 'Cash at Bank': 3975464, 'Fixed Assets (Gross)': 2500000,
+    'Accumulated Depreciation': 500000, 'Interest Receivable': 50000,
+    'Paid-up Capital': 30000000,
+  },
+  'Jun-26': {
+    'Cash at Bank': 1541804, 'Fixed Assets (Gross)': 2500000, 'Accumulated Depreciation': 500000,
+    'Interest Receivable': 1275153, 'Other Assets': 879680, 'Retained Profits': 1861374,
+    'Paid-up Capital': 30000000,
+  },
+}
+Object.values(HISTORICAL_FS_DATA).forEach(row => {
+  if (row['Fixed Assets (Gross)'] != null && row['Accumulated Depreciation'] != null) {
+    row['Net Fixed Assets'] = row['Fixed Assets (Gross)'] - row['Accumulated Depreciation']
+  }
+})
 
 function quarterLabel(quarter: string): string {
   const [q, y] = quarter.split('-')
@@ -255,59 +256,64 @@ function inRange(dateStr: string | null | undefined, start: Date, end: Date): bo
   return d >= start && d <= end
 }
 
-const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
-
-// Quarter header cells (e.g. "Sep-26") are stored as real Date values with a
-// display format, not strings — compare on month/year, not raw text.
-function cellQuarterLabel(val: any): string {
-  if (val instanceof Date) return `${MONTHS[val.getMonth()]}-${String(val.getFullYear()).slice(2)}`
-  return norm(val)
+// Steps a "Mon-YY" label back by 3 months, so the FS sheet's 5 columns
+// always end with the requested quarter in column H, regardless of which
+// quarter is actually being generated.
+function stepQuarterLabelBack(label: string, stepsBack: number): string {
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const [monStr, yyStr] = label.split('-')
+  let monthIdx = MONTHS.indexOf(monStr)
+  let year = 2000 + Number(yyStr)
+  let totalMonths = year * 12 + monthIdx - stepsBack * 3
+  const newYear = Math.floor(totalMonths / 12)
+  const newMonth = ((totalMonths % 12) + 12) % 12
+  return `${MONTHS[newMonth]}-${String(newYear).slice(2)}`
 }
 
-function findOrCreateQuarterColumn(ws: any, label: string): number {
-  const headerRowIdx = 3
-  const headerRow = ws.getRow(headerRowIdx)
-  let lastCol = FS_FIRST_QUARTER_COL - 1
-  for (let c = FS_FIRST_QUARTER_COL; c <= 30; c++) {
-    const val = headerRow.getCell(c).value
-    if (!val) break
-    if (cellQuarterLabel(val) === label.toLowerCase()) return c
-    lastCol = c
-  }
-  const newCol = lastCol + 1
-  const prevCell = headerRow.getCell(lastCol)
-  const newCell = headerRow.getCell(newCol)
-  newCell.value = label
-  newCell.style = JSON.parse(JSON.stringify(prevCell.style || {}))
-  return newCol
-}
+function buildFsSheet(wb: any, requestedLabel: string, liveValues: Record<string, number | null>) {
+  const ws = wb.addWorksheet(FS_SHEET_NAME)
+  ws.views = [{ state: 'frozen', ySplit: 3 }]
 
-function buildItemRowMap(ws: any): Record<number, number> {
-  const map: Record<number, number> = {}
-  for (let r = 4; r <= 140; r++) {
-    const text = String(ws.getCell(r, FS_LABEL_COL).value ?? '')
-    const m = text.match(/(\d+)\s*\./)
-    if (m) {
-      const n = Number(m[1])
-      if (!(n in map)) map[n] = r
-    }
-  }
-  return map
-}
+  ws.getColumn(FS_LABEL_COL).width = 34
+  for (let c = FS_FIRST_QUARTER_COL; c < FS_FIRST_QUARTER_COL + FS_QUARTER_COUNT; c++) ws.getColumn(c).width = 16
 
-function writeFsValue(ws: any, itemRows: Record<number, number>, col: number, itemNumber: number, value: number) {
-  const row = itemRows[itemNumber]
-  if (!row) return
-  const cell = ws.getCell(row, col)
-  cell.value = Math.round(value)
-  cell.numFmt = '#,##0'
-}
+  ws.getCell(1, 1).value = 'NAME OF THE NDFSP: INEMA FINANCIAL SOLUTIONS LTD'
+  ws.getCell(2, 1).value = 'DISTRICT: NYARUGENGE'
 
-async function loadTemplate(): Promise<any> {
-  const buf = fs.readFileSync(TEMPLATE_PATH)
-  const wb = new ExcelJS.Workbook()
-  await wb.xlsx.load(buf as any)
-  return wb
+  const quarterLabels: string[] = []
+  for (let i = FS_QUARTER_COUNT - 1; i >= 0; i--) quarterLabels.push(stepQuarterLabelBack(requestedLabel, i))
+
+  const headerRow = ws.getRow(3)
+  const denomCell = headerRow.getCell(FS_LABEL_COL)
+  denomCell.value = 'DENOMINATION'
+  applyHeaderStyle(denomCell)
+  quarterLabels.forEach((label, i) => {
+    const cell = headerRow.getCell(FS_FIRST_QUARTER_COL + i)
+    cell.value = label
+    applyHeaderStyle(cell)
+  })
+  headerRow.height = 22
+
+  FS_ROW_LABELS.forEach((label, i) => {
+    const r = FS_FIRST_ROW + i
+    const row = ws.getRow(r)
+    const labelCell = row.getCell(FS_LABEL_COL)
+    labelCell.value = label
+    if (BOLD_ROWS.has(label)) labelCell.font = { bold: true }
+
+    quarterLabels.forEach((qLabel, qi) => {
+      const col = FS_FIRST_QUARTER_COL + qi
+      const isLiveColumn = qLabel === requestedLabel && qi === quarterLabels.length - 1
+      const value = isLiveColumn ? liveValues[label] : HISTORICAL_FS_DATA[qLabel]?.[label]
+      const cell = row.getCell(col)
+      if (value !== null && value !== undefined) {
+        cell.value = Math.round(value)
+        cell.numFmt = '#,##0'
+        if (BOLD_ROWS.has(label)) cell.font = { bold: true }
+      }
+    })
+    applyZebraRow(row, FS_FIRST_QUARTER_COL + FS_QUARTER_COUNT - 1, i)
+  })
 }
 
 export async function generateBnrReport(quarter: string): Promise<Buffer> {
@@ -324,15 +330,6 @@ export async function generateBnrReport(quarter: string): Promise<Buffer> {
   const { start: qStart, end: qEnd } = quarterRange(quarter)
   const reportDate = qEnd
 
-  // Ledger balances (opening balance + journal movements up to the quarter
-  // end) for the non-loan balance sheet accounts. null means the account has
-  // no opening balance row and no journal entries yet — genuinely untracked,
-  // so the corresponding FS row is left untouched rather than zeroed.
-  const ledgerCodes = ['3010', '3020', '3030', '3040', '3050', '3060', '3210']
-  const ledgerBalances = await Promise.all(ledgerCodes.map(code => getAccountBalance(code, qEnd)))
-  const obMap: Record<string, number | null> = {}
-  ledgerCodes.forEach((code, i) => { obMap[code] = ledgerBalances[i] })
-
   const dayBucket = (l: any) => getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), today)
   const buckets: Record<keyof typeof LOAN_SHEET_NAMES, any[]> = {
     normal: allLoans.filter(l => dayBucket(l) === 0),
@@ -342,106 +339,83 @@ export async function generateBnrReport(quarter: string): Promise<Buffer> {
     loss: allLoans.filter(l => dayBucket(l) >= 360),
   }
 
-  const wb = await loadTemplate()
-  const styleTemplate = buildStyleTemplate(wb)
-  ;(Object.keys(LOAN_SHEET_NAMES) as Array<keyof typeof LOAN_SHEET_NAMES>).forEach(key => {
-    fillLoanSheet(wb, styleTemplate, key, buckets[key], reportDate, today)
-  })
-
-  // ── A1.2. FS sheet ─────────────────────────────────────────────────────
-  const wsFS = wb.getWorksheet(FS_SHEET_NAME)
-  const col = findOrCreateQuarterColumn(wsFS, quarterLabel(quarter))
-  const itemRows = buildItemRowMap(wsFS)
-
-  const outstandingLoans = allLoans.filter(l => Number(l.balance_outstanding) > 0)
-  const disbursedThisQuarter = allLoans.filter(l => inRange(l.disbursement_date, qStart, qEnd))
-  const paymentsThisQuarter = allPayments.filter(p => inRange(p.payment_date, qStart, qEnd))
-  const expensesThisQuarter = allExpenses.filter(e => inRange(e.expense_date, qStart, qEnd))
+  // Ledger balances (opening balance + journal movements up to the quarter
+  // end). null means the account has no opening balance row and no journal
+  // entries yet — genuinely untracked, so that FS row stays blank rather
+  // than showing a misleading zero.
+  const ASSET_CODES = ['3010', '3020', '3030', '3040', '3050', '3060', '3210']
+  const LIABILITY_CODES = ['4010', '4020', '4030', '4040', '4050', '4110', '4120', '4130', '4140']
+  const EQUITY_CODES = ['5010', '5020']
+  const allLedgerCodes = [...ASSET_CODES, ...LIABILITY_CODES, ...EQUITY_CODES]
+  const ledgerValues = await Promise.all(allLedgerCodes.map(code => getAccountBalance(code, qEnd)))
+  const ledger: Record<string, number | null> = {}
+  allLedgerCodes.forEach((code, i) => { ledger[code] = ledgerValues[i] })
 
   const sumBy = (arr: any[], pick: (x: any) => number) => arr.reduce((s, x) => s + pick(x), 0)
-  const sumWhere = (arr: any[], test: (x: any) => boolean, pick: (x: any) => number) =>
-    sumBy(arr.filter(test), pick)
-  const genderOf = (l: any) => l.iacm_clients?.gender
-  const sectorOf = (l: any) => ECONOMIC_SECTOR_MAP[l.economic_sector] ?? 'others'
-
-  // Balance sheet — only rows with a real ledger data source.
-  if (obMap['3010'] !== null) writeFsValue(wsFS, itemRows, col, 2, obMap['3010']!)
-  if (obMap['3020'] !== null) writeFsValue(wsFS, itemRows, col, 3, obMap['3020']!)
-  writeFsValue(wsFS, itemRows, col, 5, sumBy(allLoans, l => Number(l.balance_outstanding ?? 0)))
-  if (obMap['3210'] !== null) writeFsValue(wsFS, itemRows, col, 10, obMap['3210']!)
-  if (obMap['3030'] !== null) writeFsValue(wsFS, itemRows, col, 11, obMap['3030']!)
-  if (obMap['3040'] !== null || obMap['3050'] !== null || obMap['3060'] !== null) {
-    writeFsValue(wsFS, itemRows, col, 12, (obMap['3040'] ?? 0) + (obMap['3050'] ?? 0) + (obMap['3060'] ?? 0))
+  const sumIfAny = (codes: string[]) => {
+    const present = codes.filter(c => ledger[c] !== null)
+    if (present.length === 0) return null
+    return present.reduce((s, c) => s + (ledger[c] ?? 0), 0)
   }
 
-  // Income statement — quarter-period flows only, not cumulative.
+  const outstandingBalance = sumBy(allLoans, l => Number(l.balance_outstanding ?? 0))
+  const nonNormalBuckets = [...buckets.watch, ...buckets.substandard, ...buckets.doubtful, ...buckets.loss]
+  const nplBalance = sumBy(nonNormalBuckets, l => Number(l.balance_outstanding ?? 0))
+  const loanLossProvisions =
+    (Object.keys(LOAN_SHEET_NAMES) as Array<keyof typeof LOAN_SHEET_NAMES>)
+      .reduce((s, key) => s + sumBy(buckets[key], l => Number(l.balance_outstanding ?? 0) * CLASS_INFO[key].provRate), 0)
+  const netLoans = outstandingBalance - loanLossProvisions
+
+  const paymentsThisQuarter = allPayments.filter(p => inRange(p.payment_date, qStart, qEnd))
+  const expensesThisQuarter = allExpenses.filter(e => inRange(e.expense_date, qStart, qEnd))
   const interestIncome = sumBy(paymentsThisQuarter, p => Number(p.interest_portion ?? 0))
   const feesIncome = sumBy(paymentsThisQuarter, p => Number(p.fee_portion ?? 0))
-  const bankCharges = sumWhere(expensesThisQuarter, e => e.category === 'bank_charges', e => Number(e.amount ?? 0))
-  const personnel = sumWhere(expensesThisQuarter, e => e.category === 'personnel', e => Number(e.amount ?? 0))
-  const adminCategories = ['rent', 'communication', 'stationery', 'transport', 'advertising', 'legal', 'maintenance', 'tax', 'other', 'petty_cash', 'depreciation']
-  const admin = sumWhere(expensesThisQuarter, e => adminCategories.includes(e.category), e => Number(e.amount ?? 0))
+  const totalExpensesThisQuarter = sumBy(expensesThisQuarter, e => Number(e.amount ?? 0))
+  const profitForPeriod = interestIncome + feesIncome - totalExpensesThisQuarter
 
-  const financialIncome = interestIncome + feesIncome
-  const totalIncome = financialIncome
-  const financialExpenses = bankCharges
-  const totalExpenses = financialExpenses + personnel + admin
-  const profitBeforeDonations = totalIncome - totalExpenses
+  const totalLiabilities = sumIfAny(LIABILITY_CODES)
+  const totalEquityLedgerOnly = sumIfAny(EQUITY_CODES)
+  const totalEquity = totalEquityLedgerOnly !== null ? totalEquityLedgerOnly + profitForPeriod : null
 
-  writeFsValue(wsFS, itemRows, col, 32, interestIncome)
-  writeFsValue(wsFS, itemRows, col, 33, feesIncome)
-  writeFsValue(wsFS, itemRows, col, 31, financialIncome)
-  writeFsValue(wsFS, itemRows, col, 41, totalIncome)
-  writeFsValue(wsFS, itemRows, col, 45, bankCharges)
-  writeFsValue(wsFS, itemRows, col, 42, financialExpenses)
-  writeFsValue(wsFS, itemRows, col, 48, personnel)
-  writeFsValue(wsFS, itemRows, col, 49, admin)
-  writeFsValue(wsFS, itemRows, col, 51, totalExpenses)
-  writeFsValue(wsFS, itemRows, col, 52, profitBeforeDonations)
-  writeFsValue(wsFS, itemRows, col, 25, profitBeforeDonations)
+  // Net loans (not gross) roll into total assets — gross loans and loan loss
+  // provisions are informational rows only, matching standard balance-sheet
+  // convention (and the original BNR template's own total-assets formula).
+  const assetRows: (number | null)[] = [ledger['3010'], ledger['3020'], null, netLoans, ledger['3210'], ledger['3030'], sumIfAny(['3040', '3050', '3060'])]
+  const totalAssets = assetRows.some(v => v !== null) ? assetRows.reduce((s: number, v) => s + (v ?? 0), 0) : null
 
-  // Supplementary — loans outstanding by gender.
-  const menOutstanding = outstandingLoans.filter(l => genderOf(l) === 'male')
-  const womenOutstanding = outstandingLoans.filter(l => genderOf(l) === 'female')
-  writeFsValue(wsFS, itemRows, col, 61, menOutstanding.length)
-  writeFsValue(wsFS, itemRows, col, 62, womenOutstanding.length)
-  writeFsValue(wsFS, itemRows, col, 66, sumBy(menOutstanding, l => Number(l.balance_outstanding ?? 0)))
-  writeFsValue(wsFS, itemRows, col, 67, sumBy(womenOutstanding, l => Number(l.balance_outstanding ?? 0)))
+  const totalEquityAndLiabilities = (totalLiabilities !== null || totalEquity !== null)
+    ? (totalLiabilities ?? 0) + (totalEquity ?? 0)
+    : null
 
-  // Supplementary — loans outstanding by economic sector.
-  const sectorItem: Record<string, number> = { agriculture: 71, publicWorks: 72, commerce: 73, transport: 74, others: 75 }
-  for (const [sector, itemNum] of Object.entries(sectorItem)) {
-    writeFsValue(wsFS, itemRows, col, itemNum, sumWhere(outstandingLoans, l => sectorOf(l) === sector, l => Number(l.balance_outstanding ?? 0)))
+  const liveValues: Record<string, number | null> = {
+    'Cash in Vault': ledger['3010'],
+    'Cash at Bank': ledger['3020'],
+    'Term Deposits': null,
+    'Gross Loans': outstandingBalance,
+    'Loan Loss Provisions': loanLossProvisions,
+    'Net Loans': netLoans,
+    'NPLs': nplBalance,
+    'Fixed Assets (Gross)': null,
+    'Accumulated Depreciation': null,
+    'Net Fixed Assets': ledger['3210'],
+    'Interest Receivable': ledger['3030'],
+    'Other Assets': sumIfAny(['3040', '3050', '3060']),
+    'TOTAL ASSETS': totalAssets,
+    'Total Liabilities': totalLiabilities,
+    'Total Equity': totalEquity,
+    'Retained Profits': ledger['5020'],
+    'Profit for Period': profitForPeriod,
+    'Paid-up Capital': ledger['5010'],
+    'Total Equity & Liabilities': totalEquityAndLiabilities,
   }
 
-  // Supplementary — loan classification (outstanding balances by bucket).
-  const classItem: Record<keyof typeof LOAN_SHEET_NAMES, number> = { normal: 78, watch: 79, substandard: 80, doubtful: 81, loss: 82 }
-  for (const [key, itemNum] of Object.entries(classItem) as Array<[keyof typeof LOAN_SHEET_NAMES, number]>) {
-    writeFsValue(wsFS, itemRows, col, itemNum, sumBy(buckets[key], l => Number(l.balance_outstanding ?? 0)))
-  }
+  const wb = new ExcelJS.Workbook()
 
-  // Supplementary — loans disbursed this quarter, by gender.
-  const menDisbursed = disbursedThisQuarter.filter(l => genderOf(l) === 'male')
-  const womenDisbursed = disbursedThisQuarter.filter(l => genderOf(l) === 'female')
-  writeFsValue(wsFS, itemRows, col, 86, menDisbursed.length)
-  writeFsValue(wsFS, itemRows, col, 87, womenDisbursed.length)
-  writeFsValue(wsFS, itemRows, col, 91, sumBy(menDisbursed, l => Number(l.disbursed_amount ?? 0)))
-  writeFsValue(wsFS, itemRows, col, 92, sumBy(womenDisbursed, l => Number(l.disbursed_amount ?? 0)))
+  buildFsSheet(wb, quarterLabel(quarter), liveValues)
+  ;(Object.keys(LOAN_SHEET_NAMES) as Array<keyof typeof LOAN_SHEET_NAMES>).forEach(key => {
+    buildLoanSheet(wb, LOAN_SHEET_NAMES[key], CLASS_INFO[key], buckets[key], reportDate, today)
+  })
 
-  // Supplementary — loans disbursed this quarter, by economic sector.
-  const sectorDisbursedItem: Record<string, number> = { agriculture: 96, publicWorks: 97, commerce: 98, transport: 99, others: 100 }
-  for (const [sector, itemNum] of Object.entries(sectorDisbursedItem)) {
-    writeFsValue(wsFS, itemRows, col, itemNum, sumWhere(disbursedThisQuarter, l => sectorOf(l) === sector, l => Number(l.disbursed_amount ?? 0)))
-  }
-
-  // Supplementary — women-borrower financing summary (rows 113-117 track individual
-  // women borrowers, confirmed against sample data matching rows 92/67 exactly).
-  writeFsValue(wsFS, itemRows, col, 113, womenDisbursed.length)
-  writeFsValue(wsFS, itemRows, col, 114, womenOutstanding.length)
-  writeFsValue(wsFS, itemRows, col, 115, sumBy(womenDisbursed, l => Number(l.disbursed_amount ?? 0)))
-  writeFsValue(wsFS, itemRows, col, 116, sumBy(womenOutstanding, l => Number(l.balance_outstanding ?? 0)))
-  writeFsValue(wsFS, itemRows, col, 117, womenOutstanding.length)
-
-  const buffer: Buffer = await wb.xlsx.writeBuffer()
-  return buffer
+  const buffer = await wb.xlsx.writeBuffer()
+  return buffer as any
 }

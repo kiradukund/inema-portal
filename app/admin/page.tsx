@@ -170,12 +170,13 @@ export default async function AdminDashboard() {
   const ledgerAssets = assetBalances.reduce((s: number, v) => s + (v ?? 0), 0) - (accumulatedDepreciation ?? 0)
   const liveTotalAssets = ledgerAssets + totalOutstanding
 
-  const historicalRows = [
-    { period: 'Sep 2025', assets: 34449836, loans: 20200000, profit: 1413175, clients: 8 },
-    { period: 'Dec 2025', assets: 35094001, loans: 19924960, profit: 2063739, clients: 10 },
-    { period: 'Jun 2026', assets: 37284089, loans: 29587452, profit: 5220369, clients: 21 },
-  ]
-  const liveRow = { period: 'Latest (live)', assets: liveTotalAssets, loans: totalOutstanding, profit: netProfit, clients: totalClients }
+  // Previously this table also carried 3 hardcoded rows (Sep 2025, Dec 2025,
+  // Jun 2026) from an earlier session's estimates. Removed: the real journal
+  // (public/journal_template.xlsx) only starts ~Jan 2026, so Sep/Dec 2025
+  // were never backed by any actual record, and the Jun 2026 figures didn't
+  // match the verified trial balance once opening balances were reconciled.
+  // Only this live row is shown now — it's a real query, not an estimate.
+  const liveRow = { period: `As of ${today.toLocaleDateString('en-RW', { day: '2-digit', month: 'short', year: 'numeric' })}`, assets: liveTotalAssets, loans: totalOutstanding, profit: netProfit, clients: totalClients }
 
   const loanTypeLabel: Record<string, string> = {
     salary_advance: 'Salary Advance', quinzaine: 'Quinzaine', school_fees: 'School Fees', business: 'Business',
@@ -361,28 +362,27 @@ export default async function AdminDashboard() {
         </div>
       </div>
 
-      {/* Section 5 — Historical performance */}
+      {/* Section 5 — Current financial position (ledger + live tables, no estimates) */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-        <h2 className="font-bold text-slate-800 mb-4">Historical Performance</h2>
+        <h2 className="font-bold text-slate-800 mb-1">Current Financial Position</h2>
+        <p className="text-xs text-slate-400 mb-4">Total Assets from opening balances + journal ledger; Loan Portfolio, Net Profit and Clients from live records</p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[560px]">
             <thead>
               <tr className="border-b border-slate-100">
-                {['Quarter', 'Total Assets', 'Loan Portfolio', 'Net Profit', 'Clients'].map(h => (
+                {['As of', 'Total Assets', 'Loan Portfolio', 'Net Profit', 'Clients'].map(h => (
                   <th key={h} className="text-left py-2 px-3 text-xs font-semibold text-slate-400 uppercase whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {[...historicalRows, liveRow].map(row => (
-                <tr key={row.period} className={`border-b border-slate-50 ${row.period === 'Latest (live)' ? 'bg-amber-50/60' : ''}`}>
-                  <td className="py-3 px-3 font-semibold text-slate-700 whitespace-nowrap">{row.period}</td>
-                  <td className="py-3 px-3 whitespace-nowrap">{formatRWF(row.assets)}</td>
-                  <td className="py-3 px-3 whitespace-nowrap">{formatRWF(row.loans)}</td>
-                  <td className="py-3 px-3 text-green-700 font-semibold whitespace-nowrap">{formatRWF(row.profit)}</td>
-                  <td className="py-3 px-3">{row.clients.toLocaleString()}</td>
-                </tr>
-              ))}
+              <tr className="bg-amber-50/60">
+                <td className="py-3 px-3 font-semibold text-slate-700 whitespace-nowrap">{liveRow.period}</td>
+                <td className="py-3 px-3 whitespace-nowrap">{formatRWF(liveRow.assets)}</td>
+                <td className="py-3 px-3 whitespace-nowrap">{formatRWF(liveRow.loans)}</td>
+                <td className="py-3 px-3 text-green-700 font-semibold whitespace-nowrap">{formatRWF(liveRow.profit)}</td>
+                <td className="py-3 px-3">{liveRow.clients.toLocaleString()}</td>
+              </tr>
             </tbody>
           </table>
         </div>

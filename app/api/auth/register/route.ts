@@ -19,8 +19,12 @@ export async function POST(req: NextRequest) {
     const { full_name, email, phone, password } = parsed.data
     const supabase = createAdminClient()
 
+    // Email confirmation adds no real security value here — identity is
+    // already verified via document upload at the loan application step —
+    // and with no confirmation-link email ever actually sent, `false` here
+    // left every registrant permanently unable to log in.
     const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-      email, password, email_confirm: false,
+      email, password, email_confirm: true,
       user_metadata: { full_name, phone },
     })
 

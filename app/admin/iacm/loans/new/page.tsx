@@ -10,7 +10,11 @@ const DISTRICTS = ['Bugesera','Burera','Gakenke','Gasabo','Gatsibo','Gicumbi','G
 const LOAN_TYPES = ['Salary Advance','Business Loan','School Fees Loan','Quinzaine Loan']
 const COLLATERAL_TYPES = ['Other assets','Land & Building','Cash deposit','Guarantor','None']
 const ECONOMIC_SECTORS = ['Agriculture','Commerce & Trade','Transport','Construction','Services','Education','Health','Other']
-const PAYMENT_METHODS = ['mobile_money','bank_transfer','cash']
+const PAYMENT_METHODS = [
+  { value: 'bank_transfer', label: 'Bank Transfer' },
+  { value: 'mobile_money', label: 'Mobile Money (MoMo)' },
+  { value: 'cash', label: 'Cash' },
+]
 
 export default function NewLoanEntry() {
   const router = useRouter()
@@ -29,7 +33,7 @@ export default function NewLoanEntry() {
     maturity_date: '', interest_method: 'flat', repayment_frequency_days: '30',
     grace_period_days: '0', first_payment_date: '', collateral_type: 'Other assets',
     collateral_amount: '0', purpose: '', economic_sector: 'Commerce & Trade',
-    loan_officer: 'KUBWIMANA Devotha',
+    loan_officer: 'KUBWIMANA Devotha', disbursement_method: 'bank_transfer',
   })
 
   async function submit() {
@@ -175,6 +179,12 @@ export default function NewLoanEntry() {
               <input type="date" className={inputCls} value={loan.disbursement_date} onChange={e => setLoan({...loan, disbursement_date: e.target.value})} />
             </div>
             <div>
+              <label className={labelCls}>Disbursed From</label>
+              <select className={inputCls} value={loan.disbursement_method} onChange={e => setLoan({...loan, disbursement_method: e.target.value})}>
+                {PAYMENT_METHODS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </div>
+            <div>
               <label className={labelCls}>Maturity Date *</label>
               <input type="date" className={inputCls} value={loan.maturity_date} onChange={e => setLoan({...loan, maturity_date: e.target.value})} />
             </div>
@@ -267,6 +277,7 @@ export default function NewLoanEntry() {
                 ['Type', loan.loan_type],
                 ['Amount', `RWF ${Number(loan.disbursed_amount).toLocaleString()}`],
                 ['Disbursement', loan.disbursement_date],
+                ['Disbursed From', PAYMENT_METHODS.find(m => m.value === loan.disbursement_method)?.label ?? loan.disbursement_method],
                 ['Maturity', loan.maturity_date],
                 ['Interest Method', loan.interest_method === 'flat' ? 'Flat Rate (5%/month)' : 'Declining Balance (5%/month)'],
                 ['Collateral', `${loan.collateral_type} — RWF ${Number(loan.collateral_amount).toLocaleString()}`],

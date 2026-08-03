@@ -70,6 +70,35 @@ export async function POST(req: NextRequest) {
     }).select().single()
 
     if (loanErr) return serverError(loanErr)
+
+    // Auto-post the disbursement journal entry. Non-fatal — the loan itself
+    // is already recorded above. Without this, iacm_loans.balance_outstanding
+    // grows with every new loan (correctly feeding the dashboard's Loan
+    // Portfolio total) but the cash that actually left the bank/vault to
+    // fund it never gets subtracted from the ledger, silently inflating
+    // Total Assets over time (same cash counted as both "still in the bank"
+    // and "now a loan receivable"). Debiting 3110 here (rather than crediting
+    // it, as repayments used to) keeps 3110 as a running record of gross
+    // disbursements — it's still excluded from Total Assets sums everywhere
+    // (iacm_loans remains the source of truth for loan portfolio value), so
+    // this doesn't reopen the double-counting issue fixed in the payments route.
+    try {
+      const cashAccount = loan.disbursement_method === 'cash'
+        ? { code: '3010', name: 'Cash on Hand' }
+        : { code: '3020', name: 'Bank Accounts' }
+      const amount = Number(loan.disbursed_amount)
+      const reference = `loan-${newLoan.id}`
+      const narration = `Loan disbursed — ${client.full_name} (${loanNumber})`
+      const lines = [
+        { entry_date: loan.disbursement_date, account_code: '3110', account_name: 'Loan Issued', debit: amount, credit: 0, description: narration, reference },
+        { entry_date: loan.disbursement_date, account_code: cashAccount.code, account_name: cashAccount.name, debit: 0, credit: amount, description: narration, reference },
+      ]
+      const { error: journalErr } = await supabase.from('iacm_journal_entries').insert(lines)
+      if (journalErr) console.error('Journal auto-entry failed (non-fatal):', journalErr)
+    } catch (journalErr) {
+      console.error('Journal auto-entry failed (non-fatal):', journalErr)
+    }
+
     return ok({ loan: newLoan, loan_number: loanNumber }, 201)
   } catch (e) { return serverError(e) }
 }

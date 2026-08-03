@@ -41,8 +41,6 @@ export default async function AdminDashboard() {
   const thisMonthKey = today.toISOString().slice(0, 7)
 
   const [
-    { data: importedLoans },
-    { data: importedClients },
     { data: oldExpenses },
     { data: complianceDeadlines },
     { data: iacmLoans },
@@ -51,8 +49,6 @@ export default async function AdminDashboard() {
     { data: iacmExpenses },
     { data: pendingApps },
   ] = await Promise.all([
-    supabase.from('imported_loans').select('*'),
-    supabase.from('imported_clients').select('*'),
     supabase.from('expenses').select('*'),
     supabase.from('compliance_deadlines').select('*').eq('is_done', false).order('deadline_date', { ascending: true }).limit(8),
     supabase.from('iacm_loans').select('*, iacm_clients(full_name, phone, gender)').order('created_at', { ascending: false }),
@@ -62,8 +58,11 @@ export default async function AdminDashboard() {
     supabase.from('loan_applications').select('*').eq('status', 'submitted').order('submitted_at', { ascending: false }),
   ])
 
-  const allImportedLoans = importedLoans ?? []
-  const allImportedClients = importedClients ?? []
+  // imported_loans/imported_clients deliberately excluded from every KPI
+  // below — confirmed stale (frozen at an 11-Jun-2026 bulk import, missing
+  // real repayments the maintained ledger already has), so blending them in
+  // produced numbers we could prove were wrong. iacm_* is now the sole
+  // source of truth for loan/client figures going forward.
   const allOldExpenses = oldExpenses ?? []
   const allIacmLoans = (iacmLoans ?? []) as any[]
   const allIacmClients = iacmClients ?? []
@@ -84,31 +83,13 @@ export default async function AdminDashboard() {
   }
 
   // ── Combined KPIs ──────────────────────────────────────────────────────
-  const totalDisbursed =
-    allImportedLoans.reduce((s, l) => s + (l.principal ?? 0), 0) +
-    allIacmLoans.reduce((s, l) => s + Number(l.disbursed_amount ?? 0), 0)
+  const totalDisbursed = allIacmLoans.reduce((s, l) => s + Number(l.disbursed_amount ?? 0), 0)
 
-  const totalCollected =
-    allImportedLoans.reduce((s, l) => s + (l.amount_paid ?? 0), 0) +
-    allIacmPayments.reduce((s, p) => s + Number(p.total_amount ?? 0), 0)
+  const totalCollected = allIacmPayments.reduce((s, p) => s + Number(p.total_amount ?? 0), 0)
 
-  const totalOutstanding =
-    allImportedLoans.filter(l => l.status !== 'paid').reduce((s, l) => s + ((l.total_due ?? 0) - (l.amount_paid ?? 0)), 0) +
-    allIacmLoans.reduce((s, l) => s + Number(l.balance_outstanding ?? 0), 0)
+  const totalOutstanding = allIacmLoans.reduce((s, l) => s + Number(l.balance_outstanding ?? 0), 0)
 
-  const grossIncomeImported = allImportedLoans.reduce((s, l) => {
-    const p = l.principal ?? 0
-    const months = l.term_months ?? 1
-    const interest = p * 0.05 * months
-    const fee = p * 0.04
-    const vat = fee * 0.18
-    if (l.status === 'paid') return s + interest + fee + vat
-    const totalCost = interest + fee + vat
-    const paidRatio = (l.amount_paid ?? 0) / (l.total_due ?? 1)
-    return s + totalCost * paidRatio
-  }, 0)
-  const grossIncomeIacm = allIacmPayments.reduce((s, p) => s + Number(p.interest_portion ?? 0), 0)
-  const grossIncome = grossIncomeImported + grossIncomeIacm
+  const grossIncome = allIacmPayments.reduce((s, p) => s + Number(p.interest_portion ?? 0), 0)
 
   const totalExpenses =
     allOldExpenses.reduce((s, e) => s + (e.amount ?? 0), 0) +
@@ -116,14 +97,10 @@ export default async function AdminDashboard() {
 
   const netProfit = grossIncome - totalExpenses
 
-  const activeImportedLoans = allImportedLoans.filter(l => l.status === 'active' || l.status === 'partial')
-  const activeIacmLoans = allIacmLoans.filter(l => l.status === 'active')
-  const totalActiveLoans = activeImportedLoans.length + activeIacmLoans.length
+  const totalActiveLoans = allIacmLoans.filter(l => l.status === 'active').length
 
-  // "Unique" combined clients, deduped by normalized phone number where
-  // available (no shared ID space between the two client tables).
+  // Deduped by normalized phone number.
   const clientKeySet = new Set<string>()
-  allImportedClients.forEach(c => clientKeySet.add(normalizePhone(c.phone, `imported:${c.id ?? c.full_name}`)))
   allIacmClients.forEach(c => clientKeySet.add(normalizePhone(c.phone, `iacm:${c.id}`)))
   const totalClients = clientKeySet.size
 
@@ -215,7 +192,7 @@ export default async function AdminDashboard() {
 
       {/* Section 1 — Executive KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-        <KPICard label="Total Disbursed" value={formatRWF(totalDisbursed)} sub={`${allImportedLoans.length + allIacmLoans.length} loans total`} color="border-l-blue-500" icon="💼" />
+        <KPICard label="Total Disbursed" value={formatRWF(totalDisbursed)} sub={`${allIacmLoans.length} loans total`} color="border-l-blue-500" icon="💼" />
         <KPICard label="Total Collected" value={formatRWF(totalCollected)} sub="All payments received" color="border-l-green-500" icon="✅" />
         <KPICard label="Outstanding Balance" value={formatRWF(totalOutstanding)} sub="Combined portfolio" color="border-l-amber-500" icon="⏳" />
         <KPICard label="Net Profit" value={formatRWF(netProfit)} sub="Income minus expenses" color="border-l-purple-500" icon="📈" />

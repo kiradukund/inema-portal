@@ -10,6 +10,7 @@ function ClientPortalAuth() {
   const resetOk      = searchParams.get('reset') === 'success'
   const initialTab   = searchParams.get('tab') === 'register' ? 'register' : 'login'
   const staffOnlyNotice = searchParams.get('notice') === 'staff-only'
+  const sessionExpiredNotice = searchParams.get('notice') === 'session-expired'
 
   const [tab, setTab] = useState<'login' | 'register'>(initialTab)
 
@@ -103,6 +104,11 @@ function ClientPortalAuth() {
             {tab === 'login' ? (
               <>
                 {resetOk && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">✓ Password updated. Please sign in.</div>}
+                {sessionExpiredNotice && (
+                  <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm">
+                    Your session expired — please sign in again.
+                  </div>
+                )}
                 {(adminNotice || staffOnlyNotice) && (
                   <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-sm">
                     This portal is for clients only. Please use <Link href="/staff-login" className="font-semibold underline">Staff Login →</Link>

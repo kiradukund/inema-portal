@@ -30,11 +30,14 @@ export async function middleware(request: NextRequest) {
   if (pathname === '/') return response
 
   if (pathname.startsWith('/dashboard') || pathname.startsWith('/loans') || pathname.startsWith('/profile') || pathname.startsWith('/calculator') || pathname.startsWith('/documents')) {
-    if (!user) return NextResponse.redirect(new URL('/login?redirect=' + pathname, request.url))
+    // No session where one was expected — most commonly a genuinely expired
+    // token after the tab sat idle, not an actual logout. Tell the user why
+    // instead of silently landing them back on login with no explanation.
+    if (!user) return NextResponse.redirect(new URL('/login?redirect=' + pathname + '&notice=session-expired', request.url))
   }
 
   if (pathname.startsWith('/admin')) {
-    if (!user) return NextResponse.redirect(new URL('/staff-login', request.url))
+    if (!user) return NextResponse.redirect(new URL('/staff-login?notice=session-expired', request.url))
     const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
     if (profile?.role !== 'admin') return NextResponse.redirect(new URL('/dashboard', request.url))
   }

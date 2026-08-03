@@ -1,10 +1,12 @@
 'use client'
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 
-export default function StaffLoginPage() {
+function StaffLoginForm() {
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const sessionExpiredNotice = searchParams.get('notice') === 'session-expired'
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading]   = useState(false)
@@ -49,6 +51,11 @@ export default function StaffLoginPage() {
         </div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl shadow-sm p-8">
+          {sessionExpiredNotice && (
+            <div className="mb-4 p-3 bg-amber-950/50 border border-amber-800/60 rounded-lg text-amber-300 text-sm">
+              Your session expired — please sign in again.
+            </div>
+          )}
           {error && <div className="mb-4 p-3 bg-red-950/50 border border-red-800/60 rounded-lg text-red-300 text-sm">{error}</div>}
           <label className="block text-xs font-semibold text-slate-400 mb-1.5">Email Address</label>
           <input type="email" placeholder="you@inema.rw" value={email} onChange={e => setEmail(e.target.value)}
@@ -70,4 +77,8 @@ export default function StaffLoginPage() {
       </div>
     </div>
   )
+}
+
+export default function StaffLoginPage() {
+  return <Suspense><StaffLoginForm /></Suspense>
 }

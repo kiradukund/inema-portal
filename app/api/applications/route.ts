@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { LoanApplicationSchema } from '@/lib/validations'
-import { generateApplicationNumber, LOAN_LIMITS } from '@/lib/calculator'
+import { LOAN_LIMITS } from '@/lib/calculator'
 import { ok, err, unauthorized, serverError } from '@/lib/api'
 import { sendApplicationConfirmation } from '@/lib/email'
 import { checkApplicationLimit, getClientIp, rateLimitResponse } from '@/lib/ratelimit'
@@ -46,13 +46,13 @@ export async function POST(req: NextRequest) {
     if (activeLoans && activeLoans.length > 0)
       return err('You have an active loan. Complete repayment before applying again.', 409)
 
-    let application_number: string
-    try {
-      const { count } = await supabase.from('loan_applications').select('*', { count: 'exact', head: true })
-      application_number = generateApplicationNumber((count ?? 0) + 1)
-    } catch {
-      application_number = `INEMA-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`
-    }
+    // Generated via a Postgres sequence (next_application_number() RPC),
+    // not counted from existing rows — a count-then-insert approach races
+    // under concurrent submissions and also collides with existing rows
+    // whenever any row has ever been deleted, since count() no longer
+    // matches the highest number actually in use.
+    const { data: application_number, error: seqError } = await supabase.rpc('next_application_number')
+    if (seqError || !application_number) return serverError(seqError ?? new Error('Failed to generate application number'))
 
     const { data: application, error: insertError } = await supabase
       .from('loan_applications')

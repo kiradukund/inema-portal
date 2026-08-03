@@ -1,23 +1,48 @@
 import { createServerSupabaseClient } from './supabase'
 import { redirect } from 'next/navigation'
+import { unauthorized, forbidden } from './api'
 
+// For Server Components / pages only — redirect() is the right behavior
+// there. Never use this inside an API Route Handler: redirect() throws a
+// special NEXT_REDIRECT signal that a route's own try/catch will swallow
+// and turn into a JSON 500 instead of an actual redirect, and — worse —
+// it means none of the route's real logic runs at all, silently, since
+// the throw happens before any of it. Use requireAdminApi() there instead.
 export async function requireAdmin() {
   const supabase = await createServerSupabaseClient()
   const { data: { user } } = await supabase.auth.getUser()
-  
+
   if (!user) redirect('/login?redirect=/admin')
-  
+
   const { data: profile } = await supabase
     .from('profiles')
     .select('role, full_name')
     .eq('id', user.id)
     .single()
-  
+
   if (!profile || profile.role !== 'admin') {
     redirect('/dashboard?error=unauthorized')
   }
-  
+
   return { user, profile }
+}
+
+// The API Route Handler equivalent of requireAdmin() — returns a real
+// 401/403 JSON response instead of throwing a redirect signal, so a
+// route's try/catch can't mangle it into a generic server error.
+export async function requireAdminApi() {
+  const supabase = await createServerSupabaseClient()
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return { ok: false as const, response: unauthorized() }
+
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role, full_name')
+    .eq('id', user.id)
+    .single()
+  if (!profile || profile.role !== 'admin') return { ok: false as const, response: forbidden() }
+
+  return { ok: true as const, user, profile }
 }
 
 export function formatRWF(n: number): string {

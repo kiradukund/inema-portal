@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase'
-import { requireAdmin } from '@/lib/admin'
+import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const { loan_id, total_amount, payment_date, payment_method, notes } = await req.json()
     if (!loan_id || !total_amount || !payment_date) return err('Missing required fields')
 

@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireAdmin } from '@/lib/admin'
+import { requireAdminApi } from '@/lib/admin'
 import { generateBnrReport } from '@/lib/bnr-report'
 
 export async function GET(req: NextRequest) {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const quarter = req.nextUrl.searchParams.get('quarter') ?? 'Q3-2026'
     const buffer = await generateBnrReport(quarter)
     return new NextResponse(Buffer.from(buffer), {

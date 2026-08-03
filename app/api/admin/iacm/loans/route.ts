@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server'
 import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
-import { requireAdmin } from '@/lib/admin'
+import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const { client, loan } = await req.json()
     const supabase = createAdminClient()
 
@@ -105,7 +106,8 @@ export async function POST(req: NextRequest) {
 
 export async function GET() {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const supabase = createAdminClient()
     const { data, error } = await supabase
       .from('iacm_loans')

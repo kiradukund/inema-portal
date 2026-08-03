@@ -1,4 +1,4 @@
-import { requireAdmin } from '@/lib/admin'
+import { requireAdminApi } from '@/lib/admin'
 import { createAdminClient } from '@/lib/supabase'
 import { ok, err, serverError } from '@/lib/api'
 
@@ -10,7 +10,8 @@ const SIGNED_URL_TTL_SECONDS = 600
 // the only path that can read from it.
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const { id } = await params
     const adminSupabase = createAdminClient()
 

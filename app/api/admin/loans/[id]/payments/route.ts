@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase'
-import { requireAdmin } from '@/lib/admin'
+import { requireAdminApi } from '@/lib/admin'
 import { ok, err, serverError } from '@/lib/api'
 
 // POST /api/admin/loans/[id]/payments — record a payment against a portal
@@ -10,7 +10,8 @@ import { ok, err, serverError } from '@/lib/api'
 // client's own /loans and /dashboard reflect it immediately.
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const { id: loanId } = await params
     const body = await req.json().catch(() => ({}))
     const amount = Number(body.amount)

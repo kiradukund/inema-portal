@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { requireAdmin } from '@/lib/admin'
+import { requireAdminApi } from '@/lib/admin'
 import { createAdminClient } from '@/lib/supabase'
 import { ok, err, serverError } from '@/lib/api'
 
@@ -10,7 +10,8 @@ import { ok, err, serverError } from '@/lib/api'
 // updates the review status so the client isn't left waiting silently.
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const { id } = await params
     const body = await req.json().catch(() => ({}))
     const status = body.status as string

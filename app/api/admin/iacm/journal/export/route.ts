@@ -3,7 +3,7 @@ import fs from 'fs'
 import path from 'path'
 // @ts-ignore
 import ExcelJS from 'exceljs'
-import { requireAdmin } from '@/lib/admin'
+import { requireAdminApi } from '@/lib/admin'
 import { createAdminClient } from '@/lib/supabase'
 
 const TEMPLATE_PATH = path.join(process.cwd(), 'public', 'journal_template.xlsx')
@@ -34,7 +34,8 @@ interface JournalRow {
 
 export async function GET() {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const supabase = createAdminClient()
 
     const [{ data: openingBalances }, { data: entries }] = await Promise.all([

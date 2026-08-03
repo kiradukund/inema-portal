@@ -1,11 +1,12 @@
 import { NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase'
-import { requireAdmin } from '@/lib/admin'
+import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const body = await req.json()
     const { expense_date, category, description, amount, payment_method } = body
     if (!expense_date || !category || !description || !amount) return err('Missing required fields')
@@ -76,7 +77,8 @@ export async function POST(req: NextRequest) {
 
 export async function GET() {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const supabase = createAdminClient()
     const { data, error } = await supabase
       .from('iacm_expenses')

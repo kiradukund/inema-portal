@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
-import { requireAdmin } from '@/lib/admin'
+import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 import { calculateLoan } from '@/lib/calculator'
 import { sendLoanApproval } from '@/lib/email'
@@ -8,7 +8,8 @@ import type { LoanType } from '@/types'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const { id } = await params
     // auth.getUser() needs the logged-in admin's session cookie, so this one
     // call stays on the regular client; every table read/write below uses

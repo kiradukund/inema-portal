@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase'
-import { requireAdmin } from '@/lib/admin'
+import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 import { accountByCode } from '@/lib/ledger'
 
@@ -12,7 +12,9 @@ interface JournalLineInput {
 
 export async function POST(req: NextRequest) {
   try {
-    const { user } = await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
+    const { user } = auth
     const { entry_date, description, reference, lines } = await req.json()
 
     if (!entry_date || !description) return err('Date and description are required')
@@ -51,7 +53,8 @@ export async function POST(req: NextRequest) {
 
 export async function GET() {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const supabase = createAdminClient()
     const { data, error } = await supabase
       .from('iacm_journal_entries')

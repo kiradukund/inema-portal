@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server'
-import { requireAdmin } from '@/lib/admin'
+import { requireAdminApi } from '@/lib/admin'
 import { sendRaw } from '@/lib/email'
 import { ok, err, serverError } from '@/lib/api'
 
@@ -9,7 +9,8 @@ import { ok, err, serverError } from '@/lib/api'
 // needs to be retried by hand rather than re-running the whole operation.
 export async function POST(req: NextRequest) {
   try {
-    await requireAdmin()
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
     const { to, subject, html } = await req.json().catch(() => ({}))
     if (!to || !subject || !html) return err('to, subject and html are required')
 

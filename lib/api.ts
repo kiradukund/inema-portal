@@ -19,6 +19,15 @@ export function forbidden(): NextResponse<ApiResponse<null>> {
 
 export function serverError(e: unknown): NextResponse<ApiResponse<null>> {
   console.error('[SERVER ERROR]', e)
-  const message = e instanceof Error ? e.message : 'An unexpected error occurred'
+  // Supabase's PostgrestError/AuthError objects carry a real, useful
+  // `.message` (e.g. "column ... does not exist") but are plain objects,
+  // not `instanceof Error` — the old check silently discarded that message
+  // on every route using this helper, not just one. Falls back to the
+  // generic message only when there's truly nothing useful to show.
+  const message =
+    e instanceof Error ? e.message
+    : (typeof e === 'object' && e !== null && typeof (e as { message?: unknown }).message === 'string')
+      ? (e as { message: string }).message
+      : 'An unexpected error occurred'
   return err(message, 500)
 }

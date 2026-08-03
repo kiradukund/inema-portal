@@ -606,6 +606,19 @@ create index if not exists idx_iacm_journal_entries_account_date on iacm_journal
 -- locked down and only the server ever touches it.
 alter table loan_applications add column if not exists document_urls jsonb not null default '[]'::jsonb;
 
+-- ═══════════════════════════════════════════════════════════════════════════
+-- LOAN APPLICATION EMPLOYER FIELD — Run this in Supabase SQL Editor
+-- ═══════════════════════════════════════════════════════════════════════════
+-- The apply form and LoanApplicationSchema (lib/validations.ts) have always
+-- collected `employer` per-application, but this column never existed on
+-- loan_applications — every submission that included an employer value
+-- failed the insert with a real Postgres "column does not exist" error,
+-- masked by serverError()'s generic fallback message (see that fix too).
+-- app/admin/applications/page.tsx already reads `app.employer ??
+-- profile.employer_name`, anticipating this column — adding it here makes
+-- that fallback work as originally intended.
+alter table loan_applications add column if not exists employer text;
+
 insert into storage.buckets (id, name, public)
 values ('loan-documents', 'loan-documents', false)
 on conflict (id) do nothing;

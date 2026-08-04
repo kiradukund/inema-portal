@@ -27,7 +27,7 @@ transporter.verify()
 const FROM = '"INEMA Financial Solutions" <' + (process.env.GMAIL_USER ?? '') + '>'
 const ADMIN_EMAIL = process.env.GMAIL_USER ?? ''
 const SUPPORT_PHONE = '+250 788 834 132'
-const PORTAL_URL = 'https://inema-portal-t9a3.vercel.app'
+const PORTAL_URL = process.env.NEXT_PUBLIC_APP_URL || 'https://inemafinancialsolutions.com'
 
 const MAX_ATTEMPTS = 3
 const RETRY_DELAY_MS = 2000

@@ -41,7 +41,6 @@ export default async function AdminDashboard() {
   const thisMonthKey = today.toISOString().slice(0, 7)
 
   const [
-    { data: oldExpenses },
     { data: complianceDeadlines },
     { data: iacmLoans },
     { data: iacmClients },
@@ -49,7 +48,6 @@ export default async function AdminDashboard() {
     { data: iacmExpenses },
     { data: pendingApps },
   ] = await Promise.all([
-    supabase.from('expenses').select('*'),
     supabase.from('compliance_deadlines').select('*').eq('is_done', false).order('deadline_date', { ascending: true }).limit(8),
     supabase.from('iacm_loans').select('*, iacm_clients(full_name, phone, gender)').order('created_at', { ascending: false }),
     supabase.from('iacm_clients').select('id, phone, full_name'),
@@ -58,12 +56,15 @@ export default async function AdminDashboard() {
     supabase.from('loan_applications').select('*').eq('status', 'submitted').order('submitted_at', { ascending: false }),
   ])
 
-  // imported_loans/imported_clients deliberately excluded from every KPI
-  // below — confirmed stale (frozen at an 11-Jun-2026 bulk import, missing
-  // real repayments the maintained ledger already has), so blending them in
-  // produced numbers we could prove were wrong. iacm_* is now the sole
-  // source of truth for loan/client figures going forward.
-  const allOldExpenses = oldExpenses ?? []
+  // imported_loans/imported_clients/expenses (old) deliberately excluded
+  // from every KPI below. imported_loans/imported_clients were confirmed
+  // stale (frozen at an 11-Jun-2026 bulk import, missing real repayments
+  // the maintained ledger already has). The old expenses table turned out
+  // to be worse: confirmed its 33 rows are the hardcoded SEED_EXPENSES
+  // fallback from the now-deleted /admin/upload feature, not real data at
+  // all — the upload handler discarded whatever Excel file was actually
+  // uploaded and inserted this fallback regardless. iacm_* is now the sole
+  // source of truth for loan/client/expense figures going forward.
   const allIacmLoans = (iacmLoans ?? []) as any[]
   const allIacmClients = iacmClients ?? []
   const allIacmPayments = iacmPayments ?? []
@@ -91,9 +92,7 @@ export default async function AdminDashboard() {
 
   const grossIncome = allIacmPayments.reduce((s, p) => s + Number(p.interest_portion ?? 0), 0)
 
-  const totalExpenses =
-    allOldExpenses.reduce((s, e) => s + (e.amount ?? 0), 0) +
-    allIacmExpenses.reduce((s, e) => s + Number(e.amount ?? 0), 0)
+  const totalExpenses = allIacmExpenses.reduce((s, e) => s + Number(e.amount ?? 0), 0)
 
   const netProfit = grossIncome - totalExpenses
 

@@ -1,6 +1,5 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient } from '@/lib/supabase'
-import Link from 'next/link'
 
 export default async function AdminLoans() {
   await requireAdmin()
@@ -112,9 +111,6 @@ export default async function AdminLoans() {
           <h1 className="text-2xl font-bold text-slate-800">Loans</h1>
           <p className="text-slate-500 text-sm mt-1">{allLoans.length} total loans · {active.length} active · {overdue.length} overdue</p>
         </div>
-        <Link href="/admin/upload" className="bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-500">
-          + Upload Excel
-        </Link>
       </div>
 
       {/* Summary Cards */}

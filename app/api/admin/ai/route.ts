@@ -7,15 +7,22 @@ export async function POST(req: NextRequest) {
     const supabase = await createServerSupabaseClient();
 
     // Fetch all real data
-    const [{ data: loans }, { data: expenses }, { data: clients }, { data: deadlines }] = await Promise.all([
+    // NOTE: imported_loans/imported_clients here are the same confirmed-
+    // stale tables excluded from the main dashboard tonight (frozen at an
+    // 11-Jun-2026 fake bulk import) — this whole route is very likely
+    // producing garbage business analysis right now, not just the expenses
+    // figure below. Left as a flagged follow-up, not expanded into here.
+    const [{ data: loans }, { data: clients }, { data: deadlines }] = await Promise.all([
       supabase.from("imported_loans").select("*"),
-      supabase.from("expenses").select("*"),
       supabase.from("imported_clients").select("*"),
       supabase.from("compliance_deadlines").select("*").eq("is_done", false),
     ]);
 
     const allLoans = loans ?? [];
-    const allExpenses = expenses ?? [];
+    // expenses (old table) removed — confirmed its data was the hardcoded
+    // SEED_EXPENSES fallback from the now-deleted /admin/upload feature,
+    // never real. No iacm_expenses-based replacement wired in here yet.
+    const allExpenses: { amount?: number; category?: string; month?: string }[] = [];
     const allClients = clients ?? [];
 
     // Calculate key metrics

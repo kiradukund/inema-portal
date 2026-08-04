@@ -1,6 +1,5 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient } from '@/lib/supabase'
-import Link from 'next/link'
 
 export default async function AdminClients() {
   await requireAdmin()
@@ -24,9 +23,6 @@ export default async function AdminClients() {
           <h1 className="text-2xl font-bold text-slate-800">Clients</h1>
           <p className="text-slate-500 text-sm mt-1">{clients?.length ?? 0} total clients</p>
         </div>
-        <Link href="/admin/upload" className="bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-amber-500 transition-colors">
-          + Upload Excel
-        </Link>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm overflow-hidden">
@@ -86,8 +82,7 @@ export default async function AdminClients() {
         {(clients?.length ?? 0) === 0 && (
           <div className="p-12 text-center">
             <p className="text-4xl mb-3">👥</p>
-            <p className="text-slate-500 mb-4">No clients yet. Upload your Excel to import them.</p>
-            <Link href="/admin/upload" className="bg-amber-600 text-white px-6 py-2 rounded-lg text-sm font-semibold">Upload Excel</Link>
+            <p className="text-slate-500 mb-4">No clients yet.</p>
           </div>
         )}
       </div>

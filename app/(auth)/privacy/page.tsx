@@ -1,4 +1,11 @@
 import Link from 'next/link'
+import type { Metadata } from 'next'
+
+export const metadata: Metadata = {
+  title: 'Privacy Policy | INEMA Financial Solutions Ltd',
+  description: 'Privacy Policy for INEMA Financial Solutions Ltd, a BNR-licensed microfinance lender in Kigali, Rwanda.',
+}
+
 export default function Privacy() {
   return (
     <div className="min-h-screen bg-slate-50 py-12 px-4">

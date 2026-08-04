@@ -1,6 +1,14 @@
+import type { Metadata } from 'next'
 import { requireAdmin } from '@/lib/admin'
 import { createAdminClient } from '@/lib/supabase'
 import AdminShell from './AdminShell'
+
+// Was previously relying on nothing being linked to these pages — real
+// protection, not obscurity: guaranteed to hold even if an admin URL ever
+// gets shared, bookmarked-and-leaked, or linked from somewhere external.
+export const metadata: Metadata = {
+  robots: { index: false, follow: false },
+}
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   await requireAdmin()

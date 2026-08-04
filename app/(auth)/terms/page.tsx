@@ -1,4 +1,11 @@
 import Link from 'next/link'
+import type { Metadata } from 'next'
+
+export const metadata: Metadata = {
+  title: 'Terms of Service | INEMA Financial Solutions Ltd',
+  description: 'Terms of Service for INEMA Financial Solutions Ltd, a BNR-licensed microfinance lender in Kigali, Rwanda.',
+}
+
 export default function Terms() {
   return (
     <div className="min-h-screen bg-slate-50 py-12 px-4">

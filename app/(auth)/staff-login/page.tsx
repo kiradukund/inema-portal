@@ -63,7 +63,10 @@ function StaffLoginForm() {
           <label className="block text-xs font-semibold text-slate-400 mb-1.5">Password</label>
           <input type="password" placeholder="Your password" value={password}
             onChange={e => setPassword(e.target.value)} onKeyDown={e => e.key === 'Enter' && submit()}
-            className="w-full bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 rounded-lg px-3 py-2.5 text-sm mb-6 focus:outline-none focus:ring-2 focus:ring-slate-500" />
+            className="w-full bg-slate-800 border border-slate-700 text-slate-100 placeholder-slate-500 rounded-lg px-3 py-2.5 text-sm mb-2 focus:outline-none focus:ring-2 focus:ring-slate-500" />
+          <div className="text-right mb-4">
+            <Link href="/forgot-password" className="text-xs text-slate-500 hover:text-slate-300 hover:underline">Forgot password?</Link>
+          </div>
           <button onClick={submit} disabled={loading}
             className="w-full bg-slate-100 text-slate-900 font-bold py-2.5 rounded-lg hover:bg-white transition-colors disabled:opacity-60">
             {loading ? 'Signing in...' : 'Sign In'}

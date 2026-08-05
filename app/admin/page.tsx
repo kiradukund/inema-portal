@@ -35,7 +35,7 @@ function getDaysOverdue(maturityDate: string | null, balance: number, today: Dat
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 export default async function AdminDashboard() {
-  await requireAdmin()
+  const { profile } = await requireAdmin()
   const supabase = await createServerSupabaseClient()
   const adminSupabase = createAdminClient()
   const today = new Date()
@@ -179,7 +179,7 @@ export default async function AdminDashboard() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
+          <h1 className="text-2xl font-bold text-slate-800">Welcome back, {profile.full_name.split(' ')[0]} 👋</h1>
           <p className="text-slate-500 text-sm mt-1">
             {today.toLocaleDateString('en-RW', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>

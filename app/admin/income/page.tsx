@@ -1,5 +1,6 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient } from '@/lib/supabase'
+import { NET_PROFIT_CUTOFF, NET_PROFIT_BASE_AS_OF_CUTOFF } from '@/lib/net-profit'
 
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
@@ -24,51 +25,26 @@ export default async function AdminIncome() {
   const supabase = await createServerSupabaseClient()
 
   const [
-    { data: importedLoans },
     { data: iacmPayments },
     { data: iacmExpenses },
     { data: iacmLoans },
   ] = await Promise.all([
-    supabase.from('imported_loans').select('*'),
     supabase.from('iacm_payments').select('total_amount, interest_portion, fee_portion, payment_date'),
     supabase.from('iacm_expenses').select('amount, expense_date, category'),
     supabase.from('iacm_loans').select('disbursed_amount, balance_outstanding, status'),
   ])
 
-  const allLoans = importedLoans ?? []
   const allPayments = iacmPayments ?? []
   const allExpenses = iacmExpenses ?? []
   const allIacmLoans = iacmLoans ?? []
 
-  // Legacy Excel-imported loans compute income the old way (rate implied by
-  // status/amount_paid ratio, no direct payment records exist for these).
-  const calcLoanIncome = (loan: { principal: number; term_months: number; total_due: number; amount_paid: number; status: string }) => {
-    const p = loan.principal ?? 0
-    const m = loan.term_months ?? 1
-    const interest = p * 0.05 * m
-    const fee = p * 0.04
-    const vat = fee * 0.18
-    const total = interest + fee + vat
-    if (loan.status === 'paid') return { interest, fee, vat, total }
-    const ratio = Math.min((loan.amount_paid ?? 0) / (loan.total_due ?? 1), 1)
-    return { interest: interest * ratio, fee: fee * ratio, vat: vat * ratio, total: total * ratio }
-  }
-
+  // imported_loans deliberately excluded from every figure on this page —
+  // confirmed stale (frozen at an 11-Jun-2026 bulk import), already excluded
+  // from the main dashboard's KPIs for the same reason. iacm_* is the sole
+  // source of truth here, matching app/admin/page.tsx exactly.
   const incomeByMonth: Record<string, { interest: number; fees: number; vat: number; total: number }> = {}
   const touch = (mk: string) => { if (!incomeByMonth[mk]) incomeByMonth[mk] = { interest: 0, fees: 0, vat: 0, total: 0 } }
 
-  for (const loan of allLoans) {
-    if (!loan.date_offered) continue
-    const mk = loan.date_offered.substring(0, 7)
-    touch(mk)
-    const inc = calcLoanIncome(loan)
-    incomeByMonth[mk].interest += inc.interest
-    incomeByMonth[mk].fees += inc.fee
-    incomeByMonth[mk].vat += inc.vat
-    incomeByMonth[mk].total += inc.total
-  }
-
-  // Real, going-forward income: actual payments recorded through the IACM module.
   for (const p of allPayments) {
     const mk = (p.payment_date ?? '').slice(0, 7)
     if (!mk) continue
@@ -90,16 +66,20 @@ export default async function AdminIncome() {
 
   const totalGross = Object.values(incomeByMonth).reduce((s, v) => s + v.total, 0)
   const totalExpenses = Object.values(expensesByMonth).reduce((s, v) => s + v, 0)
-  const netProfit = totalGross - totalExpenses
-  const totalDisbursed =
-    allLoans.reduce((s, l) => s + (l.principal ?? 0), 0) +
-    allIacmLoans.reduce((s, l) => s + Number(l.disbursed_amount ?? 0), 0)
-  const totalOutstanding =
-    allLoans.filter(l => l.status !== 'paid').reduce((s, l) => s + Math.max(0, (l.total_due ?? 0) - (l.amount_paid ?? 0)), 0) +
-    allIacmLoans.reduce((s, l) => s + Number(l.balance_outstanding ?? 0), 0)
-  const activeLoanCount =
-    allLoans.filter(l => l.status !== 'paid').length +
-    allIacmLoans.filter(l => l.status === 'active').length
+
+  // Net Profit: shares NET_PROFIT_CUTOFF/NET_PROFIT_BASE_AS_OF_CUTOFF with
+  // app/admin/page.tsx via lib/net-profit.ts — these two pages must always
+  // show the same Net Profit figure.
+  const postCutoffInterest = allPayments
+    .filter(p => (p.payment_date ?? '') > NET_PROFIT_CUTOFF)
+    .reduce((s, p) => s + Number(p.interest_portion ?? 0), 0)
+  const postCutoffExpenses = allExpenses
+    .filter(e => (e.expense_date ?? '') > NET_PROFIT_CUTOFF)
+    .reduce((s, e) => s + Number(e.amount ?? 0), 0)
+  const netProfit = NET_PROFIT_BASE_AS_OF_CUTOFF + postCutoffInterest - postCutoffExpenses
+  const totalDisbursed = allIacmLoans.reduce((s, l) => s + Number(l.disbursed_amount ?? 0), 0)
+  const totalOutstanding = allIacmLoans.reduce((s, l) => s + Number(l.balance_outstanding ?? 0), 0)
+  const activeLoanCount = allIacmLoans.filter(l => l.status === 'active').length
 
   const expenseCategoryTotals: Record<string, number> = {}
   for (const e of allExpenses) {

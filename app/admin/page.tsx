@@ -90,11 +90,26 @@ export default async function AdminDashboard() {
 
   const totalOutstanding = allIacmLoans.reduce((s, l) => s + Number(l.balance_outstanding ?? 0), 0)
 
-  const grossIncome = allIacmPayments.reduce((s, p) => s + Number(p.interest_portion ?? 0), 0)
+  // Net Profit uses a hard 30-Jun-2026 cutoff, the same principle as the
+  // ledger opening balances above: NET_PROFIT_BASE_AS_OF_CUTOFF is the
+  // real, BNR-reconciled cumulative profit as of that date (sourced from
+  // retained earnings, not computed here). Only payments/expenses dated
+  // AFTER the cutoff are added on top. Without this filter, the Jan-Jun
+  // payment history backfilled from the internal journal tonight — which
+  // is already baked into that 30-Jun figure — would count itself again
+  // as "new" income the moment it landed in iacm_payments.
+  const NET_PROFIT_CUTOFF = '2026-06-30'
+  const NET_PROFIT_BASE_AS_OF_CUTOFF = 5018004.4
 
-  const totalExpenses = allIacmExpenses.reduce((s, e) => s + Number(e.amount ?? 0), 0)
+  const grossIncome = allIacmPayments
+    .filter(p => (p.payment_date ?? '') > NET_PROFIT_CUTOFF)
+    .reduce((s, p) => s + Number(p.interest_portion ?? 0), 0)
 
-  const netProfit = grossIncome - totalExpenses
+  const totalExpenses = allIacmExpenses
+    .filter(e => (e.expense_date ?? '') > NET_PROFIT_CUTOFF)
+    .reduce((s, e) => s + Number(e.amount ?? 0), 0)
+
+  const netProfit = NET_PROFIT_BASE_AS_OF_CUTOFF + grossIncome - totalExpenses
 
   const totalActiveLoans = allIacmLoans.filter(l => l.status === 'active').length
 

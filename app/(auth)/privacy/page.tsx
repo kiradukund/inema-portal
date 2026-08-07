@@ -23,7 +23,7 @@ export default function Privacy() {
             ['4. Who We Share With', 'We do not sell your data. We share only with: Rwanda CRB (required by law); BNR (regulatory reporting); platform service providers bound by confidentiality agreements.'],
             ['5. Your Rights', 'Under Rwanda\'s Data Protection Law, you have the right to access, correct, or request deletion of your data (subject to retention requirements). Contact inemafinancialsolutionsltd@gmail.com.'],
             ['6. Cookies', 'This portal uses session cookies for authentication only. No tracking or advertising cookies are used.'],
-            ['7. Contact', 'Data Controller: INEMA Financial Solutions Ltd · 3rd Floor F3B-0A, Nyakabanda, Nyarugenge, Kigali · inemafinancialsolutionsltd@gmail.com · +250 788 834 132'],
+            ['7. Contact', 'Data Controller: INEMA Financial Solutions Ltd · Town Center Building, Floor 3B, Downtown Kigali · inemafinancialsolutionsltd@gmail.com · +250 788 834 132'],
           ].map(([title, body]) => (
             <section key={title}>
               <h2 className="font-bold text-slate-800 text-base mb-2">{title}</h2>

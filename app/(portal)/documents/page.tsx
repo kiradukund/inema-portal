@@ -61,7 +61,7 @@ export default function DocumentsPage() {
           <li className="flex gap-3"><span className="font-bold text-amber-600 w-5">1.</span>Download and fill the <strong>Loan Application Form</strong></li>
           <li className="flex gap-3"><span className="font-bold text-amber-600 w-5">2.</span>Review the <strong>Document Checklist</strong> and gather all required documents</li>
           <li className="flex gap-3"><span className="font-bold text-amber-600 w-5">3.</span>Read the <strong>Key Fact Statement</strong> to understand your loan terms</li>
-          <li className="flex gap-3"><span className="font-bold text-amber-600 w-5">4.</span>Apply online below or visit us at Nyakabanda, Nyarugenge, Kigali</li>
+          <li className="flex gap-3"><span className="font-bold text-amber-600 w-5">4.</span>Apply online below or visit us at Town Center Building, Downtown Kigali</li>
         </ol>
         <div className="mt-4">
           <Link href="/loans/apply" className="bg-amber-600 hover:bg-amber-500 text-white font-semibold px-6 py-2.5 rounded-lg text-sm inline-block transition-colors">

@@ -11,6 +11,10 @@ export const metadata: Metadata = {
     icon: [
       { url: '/favicon-16x16.png', sizes: '16x16', type: 'image/png' },
       { url: '/favicon-32x32.png', sizes: '32x32', type: 'image/png' },
+      // Google's favicon guidelines recommend 48x48+ for search results;
+      // favicon.ico's bundled 48x48 isn't independently declared as a
+      // <link>, so this covers that explicitly.
+      { url: '/favicon-144x144.png', sizes: '144x144', type: 'image/png' },
     ],
     apple: '/apple-touch-icon.png',
   },

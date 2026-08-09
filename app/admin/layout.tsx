@@ -26,6 +26,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: '/admin/expenses',      icon: '📋', label: 'Expenses' },
     { href: '/admin/compliance',    icon: '⚖️',  label: 'Tax & BNR' },
     { href: '/admin/inquiries',     icon: '✉️',  label: 'Inquiries' },
+    { href: '/admin/settings/security', icon: '🔐', label: 'Security' },
   ]
 
   const iacmItems = [

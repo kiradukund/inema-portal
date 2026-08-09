@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "check-admin-guards": "node scripts/check-admin-guards.js"
   },
   "dependencies": {
     "@supabase/auth-helpers-nextjs": "^0.15.0",

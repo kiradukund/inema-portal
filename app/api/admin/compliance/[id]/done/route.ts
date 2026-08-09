@@ -1,18 +1,15 @@
 import { NextRequest } from 'next/server'
-import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
-import { ok, err, unauthorized, serverError } from '@/lib/api'
+import { createAdminClient } from '@/lib/supabase'
+import { ok, serverError } from '@/lib/api'
+import { requireAdminApi } from '@/lib/admin'
 
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const supabase = await createServerSupabaseClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return unauthorized()
-
-    const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single()
-    if (profile?.role !== 'admin') return err('Admin only', 403)
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
 
     const admin = createAdminClient()
     const { error } = await admin

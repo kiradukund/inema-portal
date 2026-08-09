@@ -1,25 +1,21 @@
-// Simple in-memory rate limiter for Vercel serverless functions
-// Each function instance has its own store — this is sufficient for INEMA's scale
-// For high traffic (10k+ req/min), upgrade to Upstash Redis
+// Upstash Redis-backed rate limiter. The previous implementation used an
+// in-memory Map, which is broken on Vercel serverless: each function
+// invocation can land on a different instance with its own empty store, so
+// the limit never actually enforced across requests. Redis is a real shared
+// store, so this now works correctly regardless of which instance handles
+// a given request.
+import { Redis } from '@upstash/redis'
+import { Ratelimit } from '@upstash/ratelimit'
 
-const store = new Map<string, { count: number; resetAt: number }>()
+const redis = Redis.fromEnv()
 
-function rateLimit(key: string, limit: number, windowMs: number): { success: boolean; remaining: number } {
-  const now = Date.now()
-  const record = store.get(key)
-
-  if (!record || now > record.resetAt) {
-    store.set(key, { count: 1, resetAt: now + windowMs })
-    return { success: true, remaining: limit - 1 }
-  }
-
-  if (record.count >= limit) {
-    return { success: false, remaining: 0 }
-  }
-
-  record.count++
-  return { success: true, remaining: limit - record.count }
-}
+// Fixed windows match the original in-memory implementation's exact reset
+// behavior (a hard reset at the end of each window) -- same rules and
+// thresholds as before, just enforced correctly now.
+const loginLimiter = new Ratelimit({ redis, limiter: Ratelimit.fixedWindow(5, '60 s'), prefix: 'ratelimit:login' })
+const registerLimiter = new Ratelimit({ redis, limiter: Ratelimit.fixedWindow(3, '1 h'), prefix: 'ratelimit:register' })
+const applicationLimiter = new Ratelimit({ redis, limiter: Ratelimit.fixedWindow(5, '1 h'), prefix: 'ratelimit:application' })
+const contactLimiter = new Ratelimit({ redis, limiter: Ratelimit.fixedWindow(3, '1 h'), prefix: 'ratelimit:contact' })
 
 export function getClientIp(req: Request): string {
   const forwarded = req.headers.get('x-forwarded-for')
@@ -27,24 +23,24 @@ export function getClientIp(req: Request): string {
   return req.headers.get('x-real-ip') ?? '127.0.0.1'
 }
 
-export function checkLoginLimit(ip: string) {
+export async function checkLoginLimit(ip: string) {
   // 5 attempts per 60 seconds
-  return rateLimit(`login:${ip}`, 5, 60_000)
+  return loginLimiter.limit(ip)
 }
 
-export function checkRegisterLimit(ip: string) {
+export async function checkRegisterLimit(ip: string) {
   // 3 registrations per hour
-  return rateLimit(`register:${ip}`, 3, 3_600_000)
+  return registerLimiter.limit(ip)
 }
 
-export function checkApplicationLimit(ip: string) {
+export async function checkApplicationLimit(ip: string) {
   // 5 applications per hour
-  return rateLimit(`application:${ip}`, 5, 3_600_000)
+  return applicationLimiter.limit(ip)
 }
 
-export function checkContactLimit(ip: string) {
+export async function checkContactLimit(ip: string) {
   // 3 messages per hour
-  return rateLimit(`contact:${ip}`, 3, 3_600_000)
+  return contactLimiter.limit(ip)
 }
 
 export function rateLimitResponse() {

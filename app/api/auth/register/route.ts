@@ -8,7 +8,7 @@ import { checkRegisterLimit, getClientIp, rateLimitResponse } from '@/lib/rateli
 export async function POST(req: NextRequest) {
   // Rate limit: 3 registrations per hour per IP
   const ip = getClientIp(req)
-  const { success } = checkRegisterLimit(ip)
+  const { success } = await checkRegisterLimit(ip)
   if (!success) return rateLimitResponse()
 
   try {

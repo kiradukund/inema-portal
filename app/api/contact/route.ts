@@ -7,7 +7,7 @@ import { checkContactLimit, getClientIp, rateLimitResponse } from '@/lib/ratelim
 export async function POST(req: NextRequest) {
   // Rate limit: 3 messages per hour per IP
   const ip = getClientIp(req)
-  const { success } = checkContactLimit(ip)
+  const { success } = await checkContactLimit(ip)
   if (!success) return rateLimitResponse()
 
   try {

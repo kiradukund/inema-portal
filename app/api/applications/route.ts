@@ -22,7 +22,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   // Rate limit: 5 applications per hour per IP
   const ip = getClientIp(req)
-  const { success } = checkApplicationLimit(ip)
+  const { success } = await checkApplicationLimit(ip)
   if (!success) return rateLimitResponse()
 
   try {

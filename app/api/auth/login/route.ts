@@ -7,7 +7,7 @@ import { checkLoginLimit, getClientIp, rateLimitResponse } from '@/lib/ratelimit
 export async function POST(req: NextRequest) {
   // Rate limit: 5 attempts per 60 seconds per IP
   const ip = getClientIp(req)
-  const { success } = checkLoginLimit(ip)
+  const { success } = await checkLoginLimit(ip)
   if (!success) return rateLimitResponse()
 
   try {

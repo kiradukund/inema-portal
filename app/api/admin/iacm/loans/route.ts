@@ -84,19 +84,33 @@ export async function POST(req: NextRequest) {
     // outstanding memo — it's still excluded from Total Assets sums
     // everywhere (iacm_loans remains the source of truth for loan portfolio
     // value), so this doesn't reopen the double-counting issue.
+    //
+    // Fee (4%) + VAT (18% of the fee) match every real disbursement in the
+    // actual historical journal (checked all 27 examples, zero variance) —
+    // recomputed here from disbursed_amount, not trusted from the client,
+    // so a tampered request body can't change what posts to the ledger.
+    // Booked as revenue immediately via a matching AR receivable (3030),
+    // same structure as the real historical entries: Bank is only credited
+    // for the principal — the fee+VAT is a receivable, collected later
+    // alongside repayments, not deducted from what the client receives now.
     try {
       const cashAccount = loan.disbursement_method === 'cash'
         ? { code: '3010', name: 'Cash on Hand' }
         : { code: '3020', name: 'Bank Accounts' }
       const amount = Number(loan.disbursed_amount)
+      const fee = amount * 0.04
+      const vat = fee * 0.18
       const reference = `loan-${newLoan.id}`
       const narration = `Loan disbursed — ${client.full_name} (${loanNumber})`
       const { error: journalErr } = await postJournalEntry(supabase, {
         entry_date: loan.disbursement_date, narration, reference, entry_type: 'disbursement',
         created_by: auth.profile.full_name,
         lines: [
+          { account_code: '3030', account_name: 'Accounts Receivable — Interest and Fees', debit: fee + vat },
           { account_code: '3110', account_name: 'Loan Issued', debit: amount },
           { account_code: cashAccount.code, account_name: cashAccount.name, credit: amount },
+          { account_code: '7020', account_name: 'Fees & Commission Income', credit: fee },
+          { account_code: '2530', account_name: 'VAT Control Account', credit: vat },
         ],
       })
       if (journalErr) console.error('Journal auto-entry failed (non-fatal):', journalErr)

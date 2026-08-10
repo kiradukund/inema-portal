@@ -95,7 +95,14 @@ export async function POST(req: NextRequest) {
           lines.push({ account_code: '7010', account_name: 'Interest Income on Loans', credit: interestPortion })
         }
         if (feePortion > 0) {
-          lines.push({ account_code: '7020', account_name: 'Fees & Commission Income', credit: feePortion })
+          // Clears the receivable set up at disbursement (Piece 1: fee + VAT
+          // are booked as revenue immediately when the loan is issued, into
+          // 3030). This repayment is just cash arriving for an already-
+          // recognized fee, not new income -- crediting 7020 again here
+          // would double-count it. Matches the real historical pattern
+          // exactly (e.g. Nzungize's actual repayment credits AR, not Fee
+          // Income a second time).
+          lines.push({ account_code: '3030', account_name: 'Accounts Receivable — Interest and Fees', credit: feePortion })
         }
         const { error: journalErr } = await postJournalEntry(supabase, {
           entry_date: payment_date, narration, reference, entry_type: 'payment',

@@ -99,10 +99,25 @@ export async function postJournalEntry(
   return { error: linesError }
 }
 
-// Opening balance + all journal movements up to (and including) asOfDate,
-// expressed as a positive number when the account is on its normal side.
-// Returns null when the account has no opening balance row and no journal
-// entries at all — genuinely untracked, as opposed to tracked-and-zero.
+// iacm_opening_balances is the reconciled, permanent snapshot of the
+// business's position as of this date — it already incorporates every real
+// transaction up to and including it. Journal entries dated on or before
+// this date must never also contribute to a balance, or the same
+// historical activity gets counted twice: once via the opening balance,
+// once via the journal entry. This is the same double-counting failure
+// mode as the Jan-Jun payment backfill fixed earlier the same night in
+// app/admin/page.tsx's Net Profit calculation — except getAccountBalance()
+// had no equivalent guard until now.
+export const LEDGER_CUTOFF_DATE = '2026-06-30'
+
+// Opening balance (as of LEDGER_CUTOFF_DATE) + journal movements dated
+// STRICTLY AFTER the cutoff, up to (and including) asOfDate, expressed as
+// a positive number when the account is on its normal side. Entries dated
+// on or before the cutoff never contribute, regardless of what exists in
+// the table — enforced by the query itself, not by what happens to be
+// backfilled or not at any given time. Returns null when the account has
+// no opening balance row and no qualifying journal entries — genuinely
+// untracked, as opposed to tracked-and-zero.
 //
 // Throws on a real query failure instead of treating it as "no activity" —
 // a broken ledger query silently masquerading as a zero balance is exactly
@@ -123,6 +138,7 @@ export async function getAccountBalance(code: string, asOfDate: Date): Promise<n
     .from('iacm_journal_lines')
     .select('debit_amount, credit_amount, iacm_journal_entries!inner(entry_date)')
     .eq('account_code', code)
+    .gt('iacm_journal_entries.entry_date', LEDGER_CUTOFF_DATE)
     .lte('iacm_journal_entries.entry_date', asOfDate.toISOString().split('T')[0])
   if (entryError) throw new Error(`getAccountBalance(${code}): iacm_journal_lines query failed: ${entryError.message}`)
 

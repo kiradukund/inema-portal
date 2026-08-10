@@ -17,6 +17,13 @@ export function forbidden(): NextResponse<ApiResponse<null>> {
   return err('You do not have permission to perform this action.', 403)
 }
 
+// Distinct from unauthorized()/forbidden(): the user is authenticated and
+// has the right role, but this session hasn't completed the extra TOTP
+// step-up their account requires yet.
+export function mfaRequired(): NextResponse<ApiResponse<null>> {
+  return err('Two-factor authentication verification required.', 401)
+}
+
 export function serverError(e: unknown): NextResponse<ApiResponse<null>> {
   console.error('[SERVER ERROR]', e)
   // Supabase's PostgrestError/AuthError objects carry a real, useful

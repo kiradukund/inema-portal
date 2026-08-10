@@ -1,6 +1,6 @@
 import { createServerSupabaseClient } from './supabase'
 import { redirect } from 'next/navigation'
-import { unauthorized, forbidden } from './api'
+import { unauthorized, forbidden, mfaRequired } from './api'
 
 // For Server Components / pages only — redirect() is the right behavior
 // there. Never use this inside an API Route Handler: redirect() throws a
@@ -24,6 +24,16 @@ export async function requireAdmin() {
     redirect('/dashboard?error=unauthorized')
   }
 
+  // Step-up MFA: currentLevel and nextLevel only diverge when this account
+  // has a verified TOTP factor AND this session hasn't completed that
+  // challenge yet. Accounts with no enrolled factor always have
+  // currentLevel === nextLevel, so this is a no-op for them — unenrolled
+  // admins see no behavior change at all.
+  const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+  if (aal && aal.currentLevel !== aal.nextLevel) {
+    redirect('/staff-login/verify?redirect=/admin')
+  }
+
   return { user, profile }
 }
 
@@ -41,6 +51,11 @@ export async function requireAdminApi() {
     .eq('id', user.id)
     .single()
   if (!profile || profile.role !== 'admin') return { ok: false as const, response: forbidden() }
+
+  const { data: aal } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel()
+  if (aal && aal.currentLevel !== aal.nextLevel) {
+    return { ok: false as const, response: mfaRequired() }
+  }
 
   return { ok: true as const, user, profile }
 }

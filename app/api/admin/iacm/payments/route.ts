@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase'
 import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
+import { postJournalEntry, type JournalLineInput } from '@/lib/ledger'
 
 export async function POST(req: NextRequest) {
   try {
@@ -55,41 +56,51 @@ export async function POST(req: NextRequest) {
     // shouldn't undo it — Devotha can always enter it manually if this
     // silently fails, and the error is logged either way.
     //
-    // iacm_journal_entries is a flat table (each row is one debit/credit
-    // line, not a header+lines pair) — multiple rows sharing `reference`
-    // form one balanced transaction, keyed by this payment's own id so
-    // separate installments on the same loan don't collide into one
-    // indistinguishable transaction.
+    // iacm_journal_entries (header) + iacm_journal_lines (the actual
+    // debit/credit rows) — see postJournalEntry in lib/ledger.ts. Keyed by
+    // this payment's own id so separate installments on the same loan
+    // don't collide into one indistinguishable transaction.
     //
-    // Only the interest/fee portion is posted here — principal is
-    // deliberately left out. iacm_loans.balance_outstanding is already the
-    // source of truth for outstanding loan principal (see bnr-report.ts's
-    // own exclusion of 3110 from its asset sum for the same reason); crediting
-    // 3110 here too, with nothing ever debiting it on disbursement, would
-    // make its ledger balance drift ever-downward and double-count the same
-    // loans two different ways.
+    // Cash/Bank is debited for the FULL amount received, not just interest+
+    // fee — real cash equal to the whole payment (principal included)
+    // actually lands in the bank. The principal portion is balanced by a
+    // credit to 3110 (Loan Issued), mirroring disbursement's debit to the
+    // same account. This does NOT reopen the double-counting issue the
+    // earlier fix was guarding against: 3110 stays excluded from every
+    // Total Assets sum in the app (iacm_loans.balance_outstanding remains
+    // the source of truth for outstanding principal), so crediting it here
+    // only affects 3110's own memo balance, not Total Assets. Without this,
+    // Cash/Bank would only ever increase by interest/fees while the
+    // outstanding-balance side (tracked externally via iacm_loans) drops by
+    // the full principal — understating Total Assets by the principal
+    // amount on every single repayment.
     try {
       const clientName = (loan as any).iacm_clients?.full_name ?? loan.loan_number
       const narration = `Loan repayment — ${clientName}`
       const reference = `payment-${paymentRow.id}`
-      const incomeAmount = interestPortion + feePortion
-      if (incomeAmount > 0) {
+      if (paid > 0) {
         // Route to Cash on Hand or Bank Accounts based on how it was
         // actually collected — previously this always hit Bank Accounts
         // even for cash payments, corrupting the Cash-vs-Bank split.
         const cashAccount = payment_method === 'cash'
           ? { code: '3010', name: 'Cash on Hand' }
           : { code: '3020', name: 'Bank Accounts' }
-        const lines = [
-          { entry_date: payment_date, account_code: cashAccount.code, account_name: cashAccount.name, debit: incomeAmount, credit: 0, description: narration, reference },
+        const lines: JournalLineInput[] = [
+          { account_code: cashAccount.code, account_name: cashAccount.name, debit: paid },
         ]
+        if (principalPortion > 0) {
+          lines.push({ account_code: '3110', account_name: 'Loan Issued', credit: principalPortion })
+        }
         if (interestPortion > 0) {
-          lines.push({ entry_date: payment_date, account_code: '7010', account_name: 'Interest Income on Loans', debit: 0, credit: interestPortion, description: narration, reference })
+          lines.push({ account_code: '7010', account_name: 'Interest Income on Loans', credit: interestPortion })
         }
         if (feePortion > 0) {
-          lines.push({ entry_date: payment_date, account_code: '7020', account_name: 'Fees & Commission Income', debit: 0, credit: feePortion, description: narration, reference })
+          lines.push({ account_code: '7020', account_name: 'Fees & Commission Income', credit: feePortion })
         }
-        const { error: journalErr } = await supabase.from('iacm_journal_entries').insert(lines)
+        const { error: journalErr } = await postJournalEntry(supabase, {
+          entry_date: payment_date, narration, reference, entry_type: 'payment',
+          created_by: auth.profile.full_name, lines,
+        })
         if (journalErr) console.error('Journal auto-entry failed (non-fatal):', journalErr)
       }
     } catch (journalErr) {

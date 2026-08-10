@@ -10,21 +10,19 @@ export default async function JournalPage() {
   await requireAdmin()
   const supabase = createAdminClient()
 
+  // iacm_journal_entries is a header table (one row per transaction) with
+  // the actual debit/credit detail in the related iacm_journal_lines —
+  // embedded here directly, since each entry row is already one complete
+  // transaction and no longer needs grouping by `reference` the way the old
+  // (incorrect) flat-table assumption required.
   const [trialBalance, { data: entries }] = await Promise.all([
     getTrialBalance(),
-    supabase.from('iacm_journal_entries').select('*').order('entry_date', { ascending: false }).order('created_at', { ascending: false }).limit(50),
+    supabase.from('iacm_journal_entries').select('*, iacm_journal_lines(*)').order('entry_date', { ascending: false }).order('created_at', { ascending: false }).limit(50),
   ])
 
   const assets = trialBalance.filter(a => a.category === 'asset')
   const liabilities = trialBalance.filter(a => a.category === 'liability')
   const equity = trialBalance.filter(a => a.category === 'equity')
-
-  const groupedEntries: Record<string, any[]> = {}
-  ;(entries ?? []).forEach((e: any) => {
-    const key = e.reference ?? e.id
-    if (!groupedEntries[key]) groupedEntries[key] = []
-    groupedEntries[key].push(e)
-  })
 
   return (
     <div className="p-8">
@@ -65,23 +63,23 @@ export default async function JournalPage() {
 
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6">
         <p className="text-sm font-bold text-slate-700 mb-4">Recent Entries</p>
-        {Object.keys(groupedEntries).length === 0 && (
+        {(entries ?? []).length === 0 && (
           <p className="text-sm text-slate-400">No journal entries recorded yet. Use "+ New Entry" to record opening balances or transactions.</p>
         )}
         <div className="space-y-4">
-          {Object.entries(groupedEntries).map(([reference, lines]) => (
-            <div key={reference} className="border border-slate-100 rounded-lg p-4">
+          {(entries ?? []).map((entry: any) => (
+            <div key={entry.id} className="border border-slate-100 rounded-lg p-4">
               <div className="flex justify-between items-baseline mb-2">
-                <p className="text-sm font-semibold text-slate-700">{lines[0].description}</p>
-                <p className="text-xs text-slate-400">{new Date(lines[0].entry_date).toLocaleDateString('en-RW')} · {reference}</p>
+                <p className="text-sm font-semibold text-slate-700">{entry.narration}</p>
+                <p className="text-xs text-slate-400">{new Date(entry.entry_date).toLocaleDateString('en-RW')} · {entry.reference}</p>
               </div>
               <table className="w-full text-sm">
                 <tbody>
-                  {lines.map((l: any) => (
+                  {(entry.iacm_journal_lines ?? []).map((l: any) => (
                     <tr key={l.id} className="border-t border-slate-50">
                       <td className="py-1.5 text-slate-600">{l.account_name}</td>
-                      <td className="py-1.5 text-right w-32">{Number(l.debit) > 0 ? formatRWF(l.debit) : ''}</td>
-                      <td className="py-1.5 text-right w-32 text-slate-400">{Number(l.credit) > 0 ? formatRWF(l.credit) : ''}</td>
+                      <td className="py-1.5 text-right w-32">{Number(l.debit_amount) > 0 ? formatRWF(l.debit_amount) : ''}</td>
+                      <td className="py-1.5 text-right w-32 text-slate-400">{Number(l.credit_amount) > 0 ? formatRWF(l.credit_amount) : ''}</td>
                     </tr>
                   ))}
                 </tbody>

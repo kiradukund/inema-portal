@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
 import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
+import { postJournalEntry } from '@/lib/ledger'
 
 export async function POST(req: NextRequest) {
   try {
@@ -78,11 +79,11 @@ export async function POST(req: NextRequest) {
     // Portfolio total) but the cash that actually left the bank/vault to
     // fund it never gets subtracted from the ledger, silently inflating
     // Total Assets over time (same cash counted as both "still in the bank"
-    // and "now a loan receivable"). Debiting 3110 here (rather than crediting
-    // it, as repayments used to) keeps 3110 as a running record of gross
-    // disbursements — it's still excluded from Total Assets sums everywhere
-    // (iacm_loans remains the source of truth for loan portfolio value), so
-    // this doesn't reopen the double-counting issue fixed in the payments route.
+    // and "now a loan receivable"). Debiting 3110 here, and crediting it back
+    // on repayment (see payments/route.ts), keeps it as a running net-
+    // outstanding memo — it's still excluded from Total Assets sums
+    // everywhere (iacm_loans remains the source of truth for loan portfolio
+    // value), so this doesn't reopen the double-counting issue.
     try {
       const cashAccount = loan.disbursement_method === 'cash'
         ? { code: '3010', name: 'Cash on Hand' }
@@ -90,11 +91,14 @@ export async function POST(req: NextRequest) {
       const amount = Number(loan.disbursed_amount)
       const reference = `loan-${newLoan.id}`
       const narration = `Loan disbursed — ${client.full_name} (${loanNumber})`
-      const lines = [
-        { entry_date: loan.disbursement_date, account_code: '3110', account_name: 'Loan Issued', debit: amount, credit: 0, description: narration, reference },
-        { entry_date: loan.disbursement_date, account_code: cashAccount.code, account_name: cashAccount.name, debit: 0, credit: amount, description: narration, reference },
-      ]
-      const { error: journalErr } = await supabase.from('iacm_journal_entries').insert(lines)
+      const { error: journalErr } = await postJournalEntry(supabase, {
+        entry_date: loan.disbursement_date, narration, reference, entry_type: 'disbursement',
+        created_by: auth.profile.full_name,
+        lines: [
+          { account_code: '3110', account_name: 'Loan Issued', debit: amount },
+          { account_code: cashAccount.code, account_name: cashAccount.name, credit: amount },
+        ],
+      })
       if (journalErr) console.error('Journal auto-entry failed (non-fatal):', journalErr)
     } catch (journalErr) {
       console.error('Journal auto-entry failed (non-fatal):', journalErr)

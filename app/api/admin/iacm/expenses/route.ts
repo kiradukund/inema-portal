@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server'
 import { createAdminClient } from '@/lib/supabase'
 import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
+import { postJournalEntry, type JournalLineInput } from '@/lib/ledger'
 
 export async function POST(req: NextRequest) {
   try {
@@ -20,10 +21,10 @@ export async function POST(req: NextRequest) {
     if (error) return serverError(error)
 
     // Auto-post the journal entry for this expense. Non-fatal — the expense
-    // itself is already recorded above. iacm_journal_entries is a flat
-    // table (each row is one debit/credit line); these two rows share
-    // `reference` to form one balanced transaction — keyed by this expense's
-    // own id, not by category, so two "rent" expenses don't collide into one
+    // itself is already recorded above. iacm_journal_entries (header) +
+    // iacm_journal_lines (the actual debit/credit rows) — see
+    // postJournalEntry in lib/ledger.ts. Keyed by this expense's own id, not
+    // by category, so two "rent" expenses don't collide into one
     // indistinguishable transaction. Account codes/names match Devotha's
     // real chart of accounts.
     try {
@@ -43,14 +44,14 @@ export async function POST(req: NextRequest) {
       }
       const amountNum = Number(amount)
       const reference = `expense-${data.id}`
-      let lines: { entry_date: string; account_code: string; account_name: string; debit: number; credit: number; description: string; reference: string }[]
+      let lines: JournalLineInput[]
 
       if (category === 'depreciation') {
         // Non-cash adjusting entry — reduces the carrying value of fixed
         // assets, never touches cash/bank.
         lines = [
-          { entry_date: expense_date, account_code: '6310', account_name: 'Depreciation Expense', debit: amountNum, credit: 0, description, reference },
-          { entry_date: expense_date, account_code: '3220', account_name: 'Accumulated Depreciation', debit: 0, credit: amountNum, description, reference },
+          { account_code: '6310', account_name: 'Depreciation Expense', debit: amountNum },
+          { account_code: '3220', account_name: 'Accumulated Depreciation', credit: amountNum },
         ]
       } else {
         const expenseAccount = EXPENSE_ACCOUNTS[category] ?? EXPENSE_ACCOUNTS.other
@@ -61,11 +62,14 @@ export async function POST(req: NextRequest) {
           ? { code: '3010', name: 'Cash on Hand' }
           : { code: '3020', name: 'Bank Accounts' }
         lines = [
-          { entry_date: expense_date, account_code: expenseAccount.code, account_name: expenseAccount.name, debit: amountNum, credit: 0, description, reference },
-          { entry_date: expense_date, account_code: cashAccount.code, account_name: cashAccount.name, debit: 0, credit: amountNum, description, reference },
+          { account_code: expenseAccount.code, account_name: expenseAccount.name, debit: amountNum },
+          { account_code: cashAccount.code, account_name: cashAccount.name, credit: amountNum },
         ]
       }
-      const { error: journalErr } = await supabase.from('iacm_journal_entries').insert(lines)
+      const { error: journalErr } = await postJournalEntry(supabase, {
+        entry_date: expense_date, narration: description, reference, entry_type: 'expense',
+        created_by: auth.profile.full_name, lines,
+      })
       if (journalErr) console.error('Journal auto-entry failed (non-fatal):', journalErr)
     } catch (journalErr) {
       console.error('Journal auto-entry failed (non-fatal):', journalErr)

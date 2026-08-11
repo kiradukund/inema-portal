@@ -40,7 +40,11 @@ export async function GET() {
 
     const [{ data: openingBalances }, { data: entries }] = await Promise.all([
       supabase.from('iacm_opening_balances').select('*'),
-      supabase.from('iacm_journal_entries').select('*').order('entry_date', { ascending: true }).order('created_at', { ascending: true }),
+      supabase
+        .from('iacm_journal_entries')
+        .select('*, iacm_journal_lines(*)')
+        .order('entry_date', { ascending: true })
+        .order('created_at', { ascending: true }),
     ])
 
     const rows: JournalRow[] = []
@@ -62,17 +66,21 @@ export async function GET() {
       })
     })
 
-    // Journal entries — iacm_journal_entries is a flat table where each row
-    // is already one debit/credit line (no separate lines table), so each
-    // row maps directly to one Journal-sheet row.
+    // Journal entries — iacm_journal_entries is a header table (one row per
+    // transaction); the actual debit/credit lines live in the related
+    // iacm_journal_lines, embedded here. Each line becomes one Journal-sheet
+    // row, all sharing the header's date/narration. Matches the same query
+    // shape already used by the Journal list page (page.tsx).
     ;(entries ?? []).forEach((e: any) => {
-      rows.push({
-        date: new Date(e.entry_date),
-        narration: e.description,
-        accountCode: e.account_code,
-        accountName: e.account_name,
-        debit: Number(e.debit ?? 0),
-        credit: Number(e.credit ?? 0),
+      ;(e.iacm_journal_lines ?? []).forEach((l: any) => {
+        rows.push({
+          date: new Date(e.entry_date),
+          narration: e.narration,
+          accountCode: l.account_code,
+          accountName: l.account_name,
+          debit: Number(l.debit_amount ?? 0),
+          credit: Number(l.credit_amount ?? 0),
+        })
       })
     })
 

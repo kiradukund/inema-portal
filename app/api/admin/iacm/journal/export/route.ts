@@ -9,9 +9,6 @@ import { createAdminClient } from '@/lib/supabase'
 const TEMPLATE_PATH = path.join(process.cwd(), 'public', 'journal_template.xlsx')
 const JOURNAL_SHEET_NAME = 'Journal'
 const DATA_START_ROW = 3
-// Opening balances are recorded as of the start of the current reporting
-// quarter (Q3 2026 = 1 July 2026), matching the BNR report's default quarter.
-const OPENING_BALANCE_DATE = new Date(2026, 6, 1)
 
 const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
@@ -38,33 +35,22 @@ export async function GET() {
     if (!auth.ok) return auth.response
     const supabase = createAdminClient()
 
-    const [{ data: openingBalances }, { data: entries }] = await Promise.all([
-      supabase.from('iacm_opening_balances').select('*'),
-      supabase
-        .from('iacm_journal_entries')
-        .select('*, iacm_journal_lines(*)')
-        .order('entry_date', { ascending: true })
-        .order('created_at', { ascending: true }),
-    ])
+    const { data: entries } = await supabase
+      .from('iacm_journal_entries')
+      .select('*, iacm_journal_lines(*)')
+      .order('entry_date', { ascending: true })
+      .order('created_at', { ascending: true })
 
     const rows: JournalRow[] = []
 
-    // Opening balances — one row per account, as of OPENING_BALANCE_DATE.
-    // iacm_opening_balances doesn't carry an account_name column reliably in
-    // all seed data, so fall back to the account code if it's missing.
-    ;(openingBalances ?? []).forEach((ob: any) => {
-      const debit = Number(ob.debit_balance ?? 0)
-      const credit = Number(ob.credit_balance ?? 0)
-      if (debit === 0 && credit === 0) return
-      rows.push({
-        date: OPENING_BALANCE_DATE,
-        narration: 'Opening Balance',
-        accountCode: ob.account_code,
-        accountName: ob.account_name || ob.account_code,
-        debit,
-        credit,
-      })
-    })
+    // No synthetic "Opening Balance" block here anymore — iacm_opening_balances
+    // (the 30-Jun-2026 reconciled snapshot) is still the source getAccountBalance()
+    // uses for every live balance figure (Total Assets, Retained Earnings, the
+    // dashboard, this page's own trial-balance boxes), untouched by this change.
+    // This export is purely the transaction-level record now: the real Jan-1,
+    // 2026 opening position is already in here as an actual journal entry
+    // (from the historical backfill), so a second, differently-dated opening
+    // summary on top of it was redundant and confusing, not informative.
 
     // Journal entries — iacm_journal_entries is a header table (one row per
     // transaction); the actual debit/credit lines live in the related

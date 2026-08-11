@@ -80,10 +80,45 @@ export default function BNRReportPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
+  const [filedReports, setFiledReports] = useState<FiledReport[]>([])
+
+  useEffect(() => {
+    fetch('/api/admin/iacm/reports/bnr/filed')
+      .then(res => res.json())
+      .then(json => setFiledReports(json.data?.reports ?? []))
+  }, [])
+
+  const [selectedQ, selectedYear] = quarter.split('-')
+  const filedForSelection = filedReports.find(r => r.quarter === selectedQ && String(r.year) === selectedYear)
+
+  async function downloadBlob(blob: Blob, filename: string) {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
 
   async function generate() {
     setLoading(true); setError(''); setSuccess(false)
     try {
+      // If this quarter was already actually filed with BNR, that real
+      // submitted file is the source of truth — serve it byte-for-byte
+      // from storage instead of regenerating from today's live data, which
+      // can legitimately differ from what was submitted months ago.
+      if (filedForSelection?.download_url) {
+        const fileRes = await fetch(filedForSelection.download_url)
+        if (!fileRes.ok) throw new Error('filed file fetch failed')
+        const blob = await fileRes.blob()
+        await downloadBlob(blob, filedForSelection.original_filename)
+        setSuccess(true)
+        setLoading(false)
+        return
+      }
+
       const res = await fetch(`/api/admin/iacm/reports/bnr?quarter=${quarter}`)
       const contentType = res.headers.get('content-type') ?? ''
       // fetch() follows redirects transparently, so an expired/invalid admin
@@ -97,14 +132,7 @@ export default function BNRReportPage() {
         setLoading(false); return
       }
       const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `INEMA_BNR_Report_${quarter}.xlsx`
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
+      await downloadBlob(blob, `INEMA_BNR_Report_${quarter}.xlsx`)
       setSuccess(true)
     } catch (e) { setError('Failed to generate. Try again.') }
     setLoading(false)
@@ -127,6 +155,9 @@ export default function BNRReportPage() {
             value={quarter} onChange={e => setQuarter(e.target.value)}>
             {QUARTERS.map(q => <option key={q.value} value={q.value}>{q.label}</option>)}
           </select>
+          {filedForSelection && (
+            <p className="text-xs text-green-600 mt-1.5">✓ Already filed with BNR — downloading will give you the exact file that was submitted, not a fresh regeneration.</p>
+          )}
         </div>
 
         <div className="bg-slate-50 rounded-lg p-4">
@@ -168,8 +199,9 @@ export default function BNRReportPage() {
 
         <button onClick={generate} disabled={loading}
           className="w-full bg-slate-800 text-white py-3.5 rounded-xl font-bold hover:bg-slate-700 disabled:opacity-60 text-sm flex items-center justify-center gap-2">
-          {loading ? <><span className="animate-spin inline-block">⟳</span> Generating Excel file...</>
-                   : <><span>📥</span> Download BNR Report — {quarter}</>}
+          {loading
+            ? <><span className="animate-spin inline-block">⟳</span> {filedForSelection ? 'Fetching filed report...' : 'Generating Excel file...'}</>
+            : <><span>📥</span> {filedForSelection ? `Download Filed Report — ${quarter}` : `Download BNR Report — ${quarter}`}</>}
         </button>
 
         <p className="text-xs text-slate-400 text-center">Downloads as .xlsx — ready to email to BNR at regulation@bnr.rw</p>

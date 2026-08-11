@@ -1,52 +1,67 @@
 // @ts-ignore
 import ExcelJS from 'exceljs'
+// @ts-ignore
+import JSZip from 'jszip'
 import { createAdminClient } from './supabase'
-import { getAccountBalance } from './ledger'
+import { getAccountBalance, getAccountMovementSum } from './ledger'
+// @ts-ignore
+const { normalizeRelativeTargets, stripExcelTables, resolveExternalLinks, stripThreadedComments } = require('../scripts/lib/xlsx-sanitize')
 
-// Built entirely from a fresh ExcelJS.Workbook() — no template file is ever
-// read. The prior approach (loading public/bnr_template.xlsx and modifying
-// it) kept triggering Excel's "we found a problem with some content" repair
-// dialog even after stripping the Excel Tables that caused it; a repair
-// warning on a document going to a financial regulator isn't something to
-// tolerate, so this version has zero inherited OOXML state to go wrong.
-// Scope note: this is a simplified 6-sheet balance-sheet-focused rebuild —
-// no income statement, no gender/sector supplementary stats, and no
-// Explanatory Note / Restructured / Written-Off sheets, unlike the real BNR
-// template or the previous template-based version of this file.
+// Generates the REAL 10-sheet, 140-row BNR template, filled from live data,
+// by loading the most recently filed real report and adding one new
+// column — not rebuilding a template from scratch. Every row's fill rule
+// below was confirmed against the four real filed reports (Sep 2025, Dec
+// 2025, Mar 2026, Jun 2026), not assumed. See docs/known-gaps.md for the
+// residual unconfirmed items (row 57, WE counts, historical-quarter
+// reconstruction limit).
 
-const LOAN_SHEET_NAMES = {
-  normal: 'A1.3. Normal Loans ',
-  watch: 'A1.4. Watch ',
-  substandard: 'A1.5. Substandard ',
-  doubtful: 'A1.6. Doubtful ',
-  loss: 'A1.7. Loss ',
+const FS_SHEET = 'A1.2. FS'
+const FS_LABEL_COL = 3
+const FS_DATA_START_COL = 4 // D
+const FS_HEADER_ROW = 3
+const CLASSIFICATION_TOTAL_COL_LABEL_ROW = 87 // rows 87-93 = classification totals block
+
+// ─── Chart-of-accounts codes used only by this report (income-statement
+// accounts are deliberately excluded from lib/ledger.ts's CHART_OF_ACCOUNTS
+// — see that file's comment) ────────────────────────────────────────────
+const ACCT = {
+  cashVault: '3010', bank: '3020', ar: '3030', otherReceivables: ['3040', '3050', '3060'],
+  ppeGross: '3210', accDep: '3220',
+  shareholdersLoan: '2030', vat: '2530', paye: '2540', maternity: '2550', pension: '2560', cbhi: '2570',
+  retainedEarnings: '1050', paidUpCapital: '1010',
+  interestIncome: '7010', feeIncome: '7020',
+  salaries: '6110', rent: '6210', bankCharges: '6280', misc: '6300',
+}
+const PAYABLES_FOR_ROW25 = [ACCT.vat, ACCT.paye, ACCT.maternity, ACCT.pension, ACCT.cbhi]
+
+const BNR_SECTORS = ['Agriculture, Livestock, Fishing', 'Public Works', 'Commerce, Restaurants, Hotels', 'Transport, Warehouses, Communications', 'Others'] as const
+const ECONOMIC_SECTOR_MAP: Record<string, typeof BNR_SECTORS[number]> = {
+  agriculture: 'Agriculture, Livestock, Fishing',
+  construction: 'Public Works',
+  commerce: 'Commerce, Restaurants, Hotels',
+  hospitality: 'Commerce, Restaurants, Hotels',
+  transport: 'Transport, Warehouses, Communications',
+  manufacturing: 'Others',
+  services: 'Others',
+  other: 'Others',
+}
+const SECTOR_ROWS_PORTFOLIO: Record<typeof BNR_SECTORS[number], number> = {
+  'Agriculture, Livestock, Fishing': 81, 'Public Works': 82, 'Commerce, Restaurants, Hotels': 83,
+  'Transport, Warehouses, Communications': 84, 'Others': 85,
+}
+const SECTOR_ROWS_DISBURSED: Record<typeof BNR_SECTORS[number], number> = {
+  'Agriculture, Livestock, Fishing': 102, 'Public Works': 103, 'Commerce, Restaurants, Hotels': 104,
+  'Transport, Warehouses, Communications': 105, 'Others': 106,
+}
+
+const CLASS_INFO = {
+  normal: { classNumber: 1, provRate: 0, sheet: 'A1.3. Normal Loans ' },
+  watch: { classNumber: 2, provRate: 0.01, sheet: 'A1.4. Watch' },
+  substandard: { classNumber: 3, provRate: 0.2, sheet: 'A1.5. Substandard' },
+  doubtful: { classNumber: 4, provRate: 0.5, sheet: 'A1.6. Doubtful' },
+  loss: { classNumber: 5, provRate: 1.0, sheet: 'A1.7 Loss' },
 } as const
-
-const CLASS_INFO: Record<keyof typeof LOAN_SHEET_NAMES, { classNumber: number; provRate: number }> = {
-  normal: { classNumber: 1, provRate: 0 },
-  watch: { classNumber: 2, provRate: 0.01 },
-  substandard: { classNumber: 3, provRate: 0.2 },
-  doubtful: { classNumber: 4, provRate: 0.5 },
-  loss: { classNumber: 5, provRate: 1.0 },
-}
-
-const NAVY = 'FF001F5B'
-const WHITE = 'FFFFFFFF'
-const ZEBRA = 'FFF9F9F9'
-
-function applyHeaderStyle(cell: any) {
-  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }
-  cell.font = { color: { argb: WHITE }, bold: true, size: 10 }
-  cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }
-}
-
-function applyZebraRow(row: any, colCount: number, rowIndexInData: number) {
-  const bg = rowIndexInData % 2 === 0 ? ZEBRA : WHITE
-  for (let c = 1; c <= colCount; c++) {
-    const cell = row.getCell(c)
-    if (!cell.fill) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } }
-  }
-}
+const CLASS_TOTAL_ROW: Record<keyof typeof CLASS_INFO, number> = { normal: 87, watch: 88, substandard: 89, doubtful: 90, loss: 91 }
 
 function getDaysOverdue(maturityDate: string, balance: number, today: Date): number {
   if (balance <= 0) return -1
@@ -55,29 +70,316 @@ function getDaysOverdue(maturityDate: string, balance: number, today: Date): num
   return Math.floor((today.getTime() - maturity.getTime()) / 86400000)
 }
 
-function addDays(dateStr: string, days: number): Date {
-  const d = new Date(dateStr)
-  d.setDate(d.getDate() + days)
-  return d
+function colLetter(col: number): string {
+  let s = ''
+  while (col > 0) { const m = (col - 1) % 26; s = String.fromCharCode(65 + m) + s; col = Math.floor((col - m) / 26) }
+  return s
 }
 
-// ── Loan classification sheets ────────────────────────────────────────────
+const QUARTER_MONTH: Record<string, string> = { Q1: 'Mar', Q2: 'Jun', Q3: 'Sep', Q4: 'Dec' }
+function quarterLabel(quarter: string): string {
+  const [q, y] = quarter.split('-')
+  return `${QUARTER_MONTH[q]}-${y.slice(2)}`
+}
+function quarterEndDate(quarter: string): Date {
+  const [q, yStr] = quarter.split('-')
+  const y = Number(yStr)
+  const endMonth: Record<string, number> = { Q1: 2, Q2: 5, Q3: 8, Q4: 11 }
+  return new Date(y, endMonth[q] + 1, 0)
+}
 
-const LOAN_HEADERS = [
-  'No.', 'Names of Borrowers', 'National ID/Passport No.', 'Telephone No.', 'Gender', 'Age',
-  'Relationship with NDFSP', 'Marital Status', 'Previous Loans Paid on Time', 'Purpose of Loan',
-  'Branch', 'Type of Collateral', 'Amount of Collateral', 'District', 'Sector', 'Cell', 'Village',
-  'Annual Interest Rate', 'Interest Calculation Method', 'Loan Officer', 'Amount Disbursed',
-  'Date of Disbursement', 'Date of Maturity', 'Agreed Frequency of Repayment in Days',
-  'Grace Period in Days', 'Agreed Date of First Payment', 'Date of Last Payment',
-  'Date Arrears Started', 'Cut-Off Date', 'Total No. of Agreed Installments',
-  'No. of Installments Paid', 'No. of Installments Outstanding', 'Principal Repaid',
-  'Balance Outstanding', 'Eligible Collateral', 'Net Amount at Risk', 'Days in Arrears',
-  'Classification', 'Provision Rate', 'Provision Required', 'Previous Provisions',
-  'Additional Provisions Required',
-]
+// ─── Sanitize a loaded workbook buffer the same way scripts/prepare-bnr-
+// template.js does for the static template — the real filed reports carry
+// the exact same OOXML issues (Tables, external links, threaded comments),
+// confirmed by direct inspection. Runs at request time so the archived
+// original in storage is never modified. ──────────────────────────────
+async function sanitizeBuffer(buf: Buffer): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(buf)
 
-// Same order as LOAN_HEADERS — index i's header is filled from values[LOAN_FIELD_KEYS[i]].
+  const sheetRelFiles = Object.keys(zip.files).filter((f: string) => /xl\/worksheets\/_rels\/sheet\d+\.xml\.rels$/.test(f))
+  for (const relPath of sheetRelFiles) {
+    const relFile = zip.file(relPath)
+    if (!relFile) continue
+    const xml = await relFile.async('string')
+    if (!/\/(comments|vmlDrawing)"/.test(xml)) continue
+    zip.file(relPath, xml.replace(/<Relationship[^>]*Type="[^"]*\/(comments|vmlDrawing)"[^>]*\/>/g, ''))
+    const sheetPath = relPath.replace('/_rels/', '/').replace('.rels', '')
+    const sheetFile = zip.file(sheetPath)
+    if (!sheetFile) continue
+    const sheetXml = await sheetFile.async('string')
+    zip.file(sheetPath, sheetXml.replace(/<legacyDrawing[^>]*\/>/g, ''))
+  }
+  for (const p of Object.keys(zip.files)) {
+    if (/^xl\/comments\/comment\d+\.xml$/.test(p) || /^xl\/drawings\/commentsDrawing\d+\.vml$/.test(p)) zip.remove(p)
+  }
+  const contentTypesFile = zip.file('[Content_Types].xml')
+  if (contentTypesFile) {
+    let ct = await contentTypesFile.async('string')
+    ct = ct.replace(/<Override PartName="\/xl\/comments\/comment\d+\.xml"[^>]*\/>/g, '')
+    zip.file('[Content_Types].xml', ct)
+  }
+
+  await stripExcelTables(zip)
+  await stripThreadedComments(zip)
+  await resolveExternalLinks(zip)
+  await normalizeRelativeTargets(zip)
+
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } })
+}
+
+// ─── Find the target quarter's column, or the next empty one after the
+// last populated quarter column if it doesn't exist yet. ─────────────────
+function findOrCreateQuarterColumn(ws: any, label: string): { col: number; prevCol: number } {
+  const headerRow = ws.getRow(FS_HEADER_ROW)
+  let lastCol = FS_DATA_START_COL - 1
+  for (let c = FS_DATA_START_COL; c <= headerRow.cellCount + 5; c++) {
+    const v = headerRow.getCell(c).value
+    if (v == null) break
+    const cellLabel = v instanceof Date
+      ? `${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][v.getMonth()]}-${String(v.getFullYear()).slice(2)}`
+      : String(v)
+    if (cellLabel === label) return { col: c, prevCol: c - 1 }
+    lastCol = c
+  }
+  return { col: lastCol + 1, prevCol: lastCol }
+}
+
+// ExcelJS models Excel's shared formulas (one "master" cell defining the
+// formula, other cells cloning it by reference) as a group — but writing a
+// plain value/formula into what was a master cell doesn't un-share the
+// clones still pointing at it, causing "Shared Formula master must exist
+// above and or left of clone" on write. Confirmed against the real March
+// 2026 file (row 9: G9 is a shared-formula master for range F9:I9;
+// overwriting G9 alone broke H9/I9). Fix: immediately after load, rewrite
+// every formula cell in every sheet as an independent (non-shared) formula
+// with the same resolved text, before any of this module's own writes.
+function flattenSharedFormulas(wb: any) {
+  for (const ws of wb.worksheets) {
+    ws.eachRow((row: any) => {
+      row.eachCell((cell: any) => {
+        if (cell.type === ExcelJS.ValueType.Formula && cell.formula) {
+          cell.value = { formula: cell.formula, result: cell.result }
+        }
+      })
+    })
+  }
+}
+
+interface Notes { push(msg: string): void; list: string[] }
+function makeNotes(): Notes { const list: string[] = []; return { push: (m: string) => list.push(m), list } }
+
+function flagCell(cell: any) {
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } }
+}
+
+async function fetchLoanData() {
+  const supabase = createAdminClient()
+  const { data: loans } = await supabase.from('iacm_loans').select('*, iacm_clients(*)')
+  return loans ?? []
+}
+
+// ─── FS sheet fill ─────────────────────────────────────────────────────
+async function fillFsSheet(wb: any, quarter: string, allLoans: any[], notes: Notes) {
+  const ws = wb.getWorksheet(FS_SHEET)
+  const label = quarterLabel(quarter)
+  const { col, prevCol } = findOrCreateQuarterColumn(ws, label)
+  const C = colLetter(col)
+  const PC = colLetter(prevCol)
+  const asOf = quarterEndDate(quarter)
+  const ytdStart = new Date(asOf.getFullYear(), 0, 1)
+
+  // Write the header if this is a genuinely new column
+  const headerCell = ws.getRow(FS_HEADER_ROW).getCell(col)
+  if (headerCell.value == null) { headerCell.value = label }
+
+  const set = (row: number, value: number | string | null, opts?: { unconfirmed?: boolean }) => {
+    const cell = ws.getRow(row).getCell(col)
+    cell.value = value
+    if (typeof value === 'number') cell.numFmt = '#,##0'
+    if (opts?.unconfirmed) flagCell(cell)
+  }
+  const formula = (row: number, template: string) => {
+    ws.getRow(row).getCell(col).value = template.replace(/\{COL\}/g, C).replace(/\{PREVCOL\}/g, PC)
+  }
+
+  // Day-bucket classification, reused for both the FS classification-total
+  // rows (87-93) and the per-loan classification sheets below. Uses the
+  // REPORT's own quarter-end date, not the real current date — a loan's
+  // overdue status for a given quarter must be evaluated as of that
+  // quarter's end, not as of whenever the report happens to be generated
+  // (confirmed as a real bug: using today's date misclassified loans that
+  // were current as of Jun 30 but have since aged past due by the time
+  // this was tested in August).
+  const dayBucket = (l: any) => getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), asOf)
+  const buckets = {
+    normal: allLoans.filter(l => dayBucket(l) === 0),
+    watch: allLoans.filter(l => { const d = dayBucket(l); return d >= 1 && d < 90 }),
+    substandard: allLoans.filter(l => { const d = dayBucket(l); return d >= 90 && d < 180 }),
+    doubtful: allLoans.filter(l => { const d = dayBucket(l); return d >= 180 && d < 360 }),
+    loss: allLoans.filter(l => dayBucket(l) >= 360),
+  }
+  const sumBal = (arr: any[]) => arr.reduce((s, l) => s + Number(l.balance_outstanding ?? 0), 0)
+  const provisions = (Object.keys(CLASS_INFO) as Array<keyof typeof CLASS_INFO>)
+    .reduce((s, k) => s + sumBal((buckets as any)[k]) * CLASS_INFO[k].provRate, 0)
+
+  // ── A. BALANCE SHEET ──
+  set(6, await getAccountBalance(ACCT.cashVault, asOf))
+  set(7, await getAccountBalance(ACCT.bank, asOf))
+  set(8, null) // term deposit — no account, confirmed always blank across all 4 real filings
+  formula(5, '={COL}8+{COL}7+{COL}6')
+  formula(9, '={COL}93')
+  set(10, provisions)
+  formula(11, '={COL}9-{COL}10')
+  formula(12, '=SUM({COL}89:{COL}92)')
+  set(13, null)
+  set(14, await getAccountBalance(ACCT.ppeGross, asOf))
+  set(15, await getAccountBalance(ACCT.accDep, asOf))
+  formula(16, '={COL}14-{COL}15')
+  set(17, await getAccountBalance(ACCT.ar, asOf))
+  const otherAssets = (await Promise.all(ACCT.otherReceivables.map(c => getAccountBalance(c, asOf)))).reduce((s: number, v) => s + (v ?? 0), 0)
+  set(18, otherAssets)
+  set(19, null)
+  formula(20, '={COL}5+{COL}11+{COL}13+{COL}16+{COL}17+{COL}18+{COL}19')
+  formula(21, '={COL}22+{COL}23+{COL}25')
+  formula(22, '={COL}112')
+  set(23, 0) // confirmed always exactly 0 (not blank) across all 4 real filings
+  set(24, null)
+  const row25 = await getAccountBalance(PAYABLES_FOR_ROW25[0], asOf).then(async v0 => {
+    const rest = await Promise.all(PAYABLES_FOR_ROW25.slice(1).map(c => getAccountBalance(c, asOf)))
+    return (v0 ?? 0) + rest.reduce((s: number, v) => s + (v ?? 0), 0)
+  })
+  set(25, row25) // confirmed exact formula: VAT+PAYE+Maternity+Pension+CBHI payables
+  formula(26, '=SUM({COL}27:{COL}32)')
+  set(27, null); set(28, null)
+  set(29, null, { unconfirmed: true }) // "Other Equity" — real historical value once matched Shareholders' Loan, not a stable pattern; left blank, flagged
+  notes.push(`FS row 29 (Other Equity): no confirmed source — historically inconsistent across filings (one quarter matched the Shareholders' Loan balance, which doesn't generalize). Left blank.`)
+  set(30, await getAccountBalance(ACCT.retainedEarnings, asOf))
+  formula(31, '={COL}66')
+  set(32, await getAccountBalance(ACCT.paidUpCapital, asOf))
+  formula(33, '={COL}26+{COL}21')
+  formula(34, '=IF(ISNUMBER({COL}12),IF(ISNUMBER({COL}9),{COL}12/{COL}9,""),"")')
+  formula(35, '=IF(ISNUMBER({COL}26),IF(ISNUMBER({COL}20),{COL}26/{COL}20,""),"")')
+  formula(36, '=IF(ISNUMBER({COL}9),IF(ISNUMBER({COL}33),{COL}9/{COL}33,""),"")')
+  formula(37, '=IF(ISNUMBER({COL}16),IF(ISNUMBER({COL}26),{COL}16/{COL}26,""),"")')
+
+  // ── B. INCOME STATEMENT (year-to-date from Jan 1, confirmed against
+  // real filed quarters — Personnel and Bank Charges reproduced exactly:
+  // Mar-26 filed + real Apr-Jun ledger movement = Jun-26 filed, to the
+  // exact rwf) ──
+  set(40, await getAccountMovementSum([ACCT.interestIncome], ytdStart, asOf, 'credit'))
+  set(41, await getAccountMovementSum([ACCT.feeIncome], ytdStart, asOf, 'credit'))
+  ;[42, 43, 44, 45, 46, 47, 48].forEach(r => set(r, null)) // confirmed always 0/blank across all 4 real filings
+  formula(39, '={COL}40+{COL}41+{COL}42+{COL}43+{COL}44')
+  formula(49, '={COL}39+{COL}45+{COL}47+{COL}48+{COL}46')
+  formula(50, '={COL}53+{COL}52+{COL}51')
+  set(51, null); set(52, null)
+  set(53, await getAccountMovementSum([ACCT.bankCharges], ytdStart, asOf, 'debit'))
+  set(54, provisions) // loan-loss provision expense mirrors the current provisions balance (always 0 in practice so far)
+  set(55, null)
+  set(56, await getAccountMovementSum([ACCT.salaries], ytdStart, asOf, 'debit'))
+  const adminExpense = await getAccountMovementSum([ACCT.rent, ACCT.misc], ytdStart, asOf, 'debit')
+  set(57, adminExpense, { unconfirmed: true })
+  notes.push(`FS row 57 (Administrative Expenses): best current hypothesis is Rent (6210) + Miscellaneous (6300), YTD. Tested against real Jun-26 filing: off by 30,000 RWF (1,692,187 computed vs 1,662,187 filed). Verify against real records before relying on this row.`)
+  set(58, null, { unconfirmed: true })
+  notes.push(`FS row 58 (Non Operating Expenses): left blank — no schema category exists, but the real Dec-25 filing shows a one-off 22,300 here. Will need manual entry if this recurs.`)
+  formula(59, '={COL}50+{COL}54+{COL}56+{COL}57+{COL}58+{COL}55')
+  formula(60, '={COL}49-{COL}59')
+  set(61, null, { unconfirmed: true })
+  notes.push(`FS row 61 (Income Tax): left blank — no schema category exists, but the real Dec-25 filing shows a one-off 204,165 here (matching the real Corporate Income Tax journal entry). Will need manual entry if this recurs.`)
+  formula(62, '={COL}60-{COL}61')
+  set(63, null)
+  formula(64, '={COL}62+{COL}63')
+  set(65, null)
+  formula(66, '={COL}64-{COL}65')
+  formula(67, '=IF(ISNUMBER({COL}59),IF(ISNUMBER({COL}49),{COL}59/{COL}49,""),"")')
+  formula(68, '=IF(ISNUMBER({COL}39),IF(ISNUMBER({COL}49),{COL}39/{COL}49,""),"")')
+  formula(69, '=({COL}60)/(({COL}20+{PREVCOL}20)/2)')
+  formula(70, '=({COL}60)/(({COL}26+{PREVCOL}26)/2)')
+
+  // ── D. SUPPLEMENTARY INFORMATION ──
+  // 73-86: cumulative OUTSTANDING portfolio (nets repayments) — confirmed
+  // via exact match: total of this block = Gross Loans (row 9/93), all 4
+  // real quarters.
+  const outstanding = allLoans.filter(l => Number(l.balance_outstanding ?? 0) > 0)
+  const outMen = outstanding.filter(l => l.iacm_clients?.gender === 'male')
+  const outWomen = outstanding.filter(l => l.iacm_clients?.gender === 'female')
+  set(73, outMen.length); set(74, outWomen.length); set(75, 0)
+  formula(76, '={COL}73+{COL}74+{COL}75')
+  set(77, sumBal(outMen)); set(78, sumBal(outWomen)); set(79, null)
+  formula(80, '={COL}77+{COL}78+{COL}79')
+  // Sector split (rows 81-85, 102-106): economic_sector is confirmed
+  // unpopulated for every real loan (0 of 21 have it set) — computing a
+  // split against this field would silently default everything into
+  // "Others" and look like a real answer. Left blank instead; real
+  // classification data doesn't exist in the schema for this.
+  const hasSectorData = allLoans.some(l => l.economic_sector != null)
+  if (hasSectorData) {
+    for (const sector of BNR_SECTORS) {
+      const inSector = outstanding.filter(l => (ECONOMIC_SECTOR_MAP[l.economic_sector] ?? 'Others') === sector)
+      set(SECTOR_ROWS_PORTFOLIO[sector], sumBal(inSector))
+    }
+  } else {
+    for (const row of Object.values(SECTOR_ROWS_PORTFOLIO)) set(row, null, { unconfirmed: true })
+    notes.push(`FS rows 81-85 (sector split, portfolio): left blank — economic_sector is not populated on any real loan (0 of ${allLoans.length}). No live source exists for this split.`)
+  }
+  formula(86, '={COL}81+{COL}82+{COL}83+{COL}84+{COL}85')
+
+  set(CLASS_TOTAL_ROW.normal, sumBal(buckets.normal))
+  set(CLASS_TOTAL_ROW.watch, sumBal(buckets.watch))
+  set(CLASS_TOTAL_ROW.substandard, sumBal(buckets.substandard))
+  set(CLASS_TOTAL_ROW.doubtful, sumBal(buckets.doubtful))
+  set(CLASS_TOTAL_ROW.loss, sumBal(buckets.loss))
+  set(92, 0) // Restructured — no schema concept, confirmed always 0
+  formula(93, '=SUM({COL}87:{COL}92)')
+
+  // 94-107: lifetime DISBURSEMENT volume (does not net repayments) —
+  // confirmed via exact match: total of this block = cumulative
+  // iacm_loans disbursed count/value since inception, all verifiable
+  // real quarters.
+  const allMen = allLoans.filter(l => l.iacm_clients?.gender === 'male')
+  const allWomen = allLoans.filter(l => l.iacm_clients?.gender === 'female')
+  const sumDisb = (arr: any[]) => arr.reduce((s, l) => s + Number(l.disbursed_amount ?? 0), 0)
+  set(94, allMen.length); set(95, allWomen.length); set(96, null)
+  formula(97, '={COL}94+{COL}95+{COL}96')
+  set(98, sumDisb(allMen)); set(99, sumDisb(allWomen)); set(100, null)
+  formula(101, '={COL}98+{COL}99+{COL}100')
+  if (hasSectorData) {
+    for (const sector of BNR_SECTORS) {
+      const inSector = allLoans.filter(l => (ECONOMIC_SECTOR_MAP[l.economic_sector] ?? 'Others') === sector)
+      set(SECTOR_ROWS_DISBURSED[sector], sumDisb(inSector))
+    }
+  } else {
+    for (const row of Object.values(SECTOR_ROWS_DISBURSED)) set(row, null, { unconfirmed: true })
+    notes.push(`FS rows 102-106 (sector split, disbursement): left blank — same reason as rows 81-85, no live source.`)
+  }
+  formula(107, '={COL}102+{COL}103+{COL}104+{COL}105+{COL}106')
+
+  set(108, await getAccountBalance(ACCT.shareholdersLoan, asOf))
+  set(109, null); set(110, null); set(111, null)
+  formula(112, '=SUM({COL}108:{COL}111)')
+
+  // 113-117: WE (Women Entrepreneurs) stats. Value rows confirmed to map
+  // to the women figures in the two blocks above; count rows have no
+  // confirmed source (real values didn't cleanly match either block's
+  // women-count across all 4 filings) — left blank rather than guessed.
+  set(113, null, { unconfirmed: true }); set(114, null, { unconfirmed: true })
+  formula(115, '={COL}99')
+  formula(116, '={COL}78')
+  set(117, null, { unconfirmed: true })
+  notes.push(`FS rows 113/114/117 (WE loan counts): no confirmed source — real counts didn't cleanly match either gender block across all 4 filed quarters. Left blank; rows 115/116 (WE values) are confirmed formulas.`)
+
+  ;[118, 119, 120, 121, 122, 123, 124, 125].forEach(r => set(r, null)) // SME/YE — no segmentation field in schema
+
+  set(126, allLoans.length)
+  set(127, 0)
+  formula(128, '={COL}101')
+  set(129, 0)
+  notes.push(`FS rows 126/128 (loan applications): wired to cumulative iacm_loans count/value since inception — confirmed exact match against the real Jun-26 filing. NOT reliable for regenerating quarters before Jun 2026: iacm_loans is missing 8 real loans that existed by Mar 2026 (confirmed: live query returns 6 loans/12,001,800 through Mar 31 vs the real filed 14 loans/30,600,000). Do not use this generator to reconstruct historical quarters.`)
+
+  ;[130, 131, 132, 133, 134, 135, 136, 137, 138, 139, 140].forEach(r => set(r, null)) // staff/board/shareholder — no HR schema
+}
+
+// ─── Classification sheets ─────────────────────────────────────────────
 const LOAN_FIELD_KEYS = [
   'no', 'name', 'nationalId', 'phone', 'gender', 'age', 'relationship', 'marital', 'prevLoansPaid', 'purpose',
   'branch', 'collateralType', 'collateralAmount', 'district', 'sector', 'cell', 'village', 'annualRate', 'method', 'officer',
@@ -85,346 +387,133 @@ const LOAN_FIELD_KEYS = [
   'installmentsPaid', 'installmentsOutstanding', 'amountRepaid', 'balanceOutstanding', 'eligibleCollateral', 'netAmountDue', 'daysOverdue', 'classCol', 'provRateCol', 'provRequired',
   'prevProvisions', 'addlProvisions',
 ]
+const HEADER_TEXT_TO_KEY: Record<string, string> = {
+  'no': 'no', 'names of borrowers': 'name', 'id of the borrower': 'nationalId', 'telephone number': 'phone',
+  'gender': 'gender', 'age': 'age', 'marital status (married/single/widow)': 'marital',
+  'previous loans paid on time (yes/no)': 'prevLoansPaid', 'purpose of the loan': 'purpose',
+  'type of collateral': 'collateralType', 'amount of collateral': 'collateralAmount',
+  'district': 'district', 'sector': 'sector', 'cell': 'cell', 'village': 'village',
+  'annual interest rate': 'annualRate', 'interest calculation method': 'method', 'loan officer': 'officer',
+  'amount disbursed': 'disbursedAmount', 'date of disbursement': 'disbursementDate', 'date of maturity': 'maturityDate',
+  'balance outstanding': 'balanceOutstanding', 'days in arrears': 'daysOverdue',
+}
 
-const LOAN_COLUMN_WIDTHS = [
-  5, 22, 17, 13, 8, 6, 16, 12, 15, 20,
-  14, 15, 14, 12, 12, 12, 12, 10, 13, 18,
-  13, 13, 13, 14, 11, 14, 13, 13, 11, 12,
-  10, 10, 13, 15, 12, 14, 10, 10, 11, 14,
-  12, 14,
-]
+function findHeaderRow(ws: any): number {
+  for (let r = 1; r <= 15; r++) {
+    for (let c = 1; c <= 10; c++) {
+      if (String(ws.getRow(r).getCell(c).value ?? '').toLowerCase().includes('names of borrowers')) return r
+    }
+  }
+  return 10
+}
 
-const HEADER_ROW = 10
-const DATA_START_ROW = 12
+async function fillClassificationSheet(wb: any, sheetName: string, classInfo: { classNumber: number; provRate: number }, loans: any[], reportDate: Date, today: Date, notes: Notes) {
+  const ws = wb.getWorksheet(sheetName)
+  if (!ws) { notes.push(`Sheet "${sheetName}" not found in base file — skipped.`); return }
+  const headerRow = findHeaderRow(ws)
+  const dataStartRow = headerRow + 2
 
-function buildLoanSheet(
-  wb: any,
-  sheetName: string,
-  classInfo: { classNumber: number; provRate: number },
-  loans: any[],
-  reportDate: Date,
-  today: Date
-) {
-  const ws = wb.addWorksheet(sheetName)
-  ws.views = [{ state: 'frozen', ySplit: HEADER_ROW }]
+  const colMap: Record<string, number> = {}
+  const hRow = ws.getRow(headerRow)
+  for (let c = 1; c <= hRow.cellCount; c++) {
+    const text = String(hRow.getCell(c).value ?? '').trim().toLowerCase()
+    const key = HEADER_TEXT_TO_KEY[text]
+    if (key) colMap[key] = c
+  }
 
-  LOAN_COLUMN_WIDTHS.forEach((w, i) => { ws.getColumn(i + 1).width = w })
-
-  ws.getCell(2, 1).value = 'NDFSP Name: INEMA FINANCIAL SOLUTIONS Ltd'
-  ws.getCell(4, 1).value = `Report Name: Loan Classification Report (${sheetName.replace(/^A1\.\d\.\s*/, '').trim().toUpperCase()})`
-
-  const headerRow = ws.getRow(HEADER_ROW)
-  LOAN_HEADERS.forEach((h, i) => {
-    const cell = headerRow.getCell(i + 1)
-    cell.value = h
-    applyHeaderStyle(cell)
-  })
-  headerRow.height = 42
+  const clearEnd = Math.max(ws.rowCount, dataStartRow + loans.length + 5)
+  for (let r = dataStartRow; r <= clearEnd; r++) {
+    for (const c of Object.values(colMap)) ws.getRow(r).getCell(c).value = null
+  }
 
   loans.forEach((l, i) => {
-    const r = DATA_START_ROW + i
+    const r = dataStartRow + i
     const row = ws.getRow(r)
     const client = l.iacm_clients ?? {}
     const daysOverdue = Math.max(0, getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), today))
-    const balance = Number(l.balance_outstanding ?? 0)
-    const paid = l.installments_paid ?? null
-    const outstanding = l.installments_outstanding ?? null
-    const prevLoansPaidText: Record<string, string> = { yes: 'yes', no: 'no', not_applicable: 'not applicable' }
-
     const values: Record<string, any> = {
-      no: i + 1,
-      name: client.full_name ?? '',
-      nationalId: client.national_id ?? '',
-      phone: client.phone ?? '',
-      gender: client.gender ?? '',
-      age: client.age ?? '',
-      relationship: 'none',
-      marital: client.marital_status ?? '',
-      prevLoansPaid: prevLoansPaidText[client.previous_loans_paid] ?? 'not applicable',
-      purpose: l.purpose ?? '',
-      branch: 'Kigali, Nyarugenge',
-      collateralType: l.collateral_type ?? '',
-      collateralAmount: Number(l.collateral_amount ?? 0),
-      district: client.district ?? '',
-      sector: client.sector ?? '',
-      cell: client.cell ?? '',
-      village: client.village ?? '',
-      annualRate: `${Math.round(Number(l.interest_rate ?? 0) * 12 * 100)}%`,
-      method: l.interest_method === 'declining' ? 'Declining' : 'Flat',
-      officer: l.loan_officer ?? '',
-      disbursedAmount: Number(l.disbursed_amount ?? 0),
+      no: i + 1, name: client.full_name ?? '', nationalId: client.national_id ?? '', phone: client.phone ?? '',
+      gender: client.gender ?? '', age: client.age ?? '', marital: client.marital_status ?? '',
+      prevLoansPaid: client.previous_loans_paid === 'yes' ? 'yes' : client.previous_loans_paid === 'no' ? 'no' : 'not applicable',
+      purpose: l.purpose ?? '', collateralType: l.collateral_type ?? '', collateralAmount: Number(l.collateral_amount ?? 0),
+      district: client.district ?? '', sector: client.sector ?? '', cell: client.cell ?? '', village: client.village ?? '',
+      annualRate: `${Math.round(Number(l.interest_rate ?? 0) * 12 * 100)}%`, method: l.interest_method === 'declining' ? 'Declining' : 'Flat',
+      officer: l.loan_officer ?? '', disbursedAmount: Number(l.disbursed_amount ?? 0),
       disbursementDate: l.disbursement_date ? new Date(l.disbursement_date) : null,
       maturityDate: l.maturity_date ? new Date(l.maturity_date) : null,
-      freqDays: `${l.repayment_frequency_days ?? 30} days`,
-      gracePeriod: Number(l.grace_period_days ?? 0),
-      firstPaymentDate: l.first_payment_date ? new Date(l.first_payment_date) : null,
-      lastPaymentDate: (l.last_payment_date ?? l.first_payment_date) ? new Date(l.last_payment_date ?? l.first_payment_date) : null,
-      arrearsStart: daysOverdue > 0 ? addDays(l.maturity_date, 1) : null,
-      cutOffDate: reportDate,
-      totalInstallments: paid != null && outstanding != null ? paid + outstanding : '',
-      installmentsPaid: paid ?? 0,
-      installmentsOutstanding: outstanding ?? '',
-      amountRepaid: Number(l.principal_repaid ?? 0),
-      balanceOutstanding: balance,
-      eligibleCollateral: 0,
-      netAmountDue: balance,
-      daysOverdue,
-      classCol: classInfo.classNumber,
-      provRateCol: `${classInfo.provRate * 100}%`,
-      provRequired: Math.round(balance * classInfo.provRate),
-      prevProvisions: 0,
-      addlProvisions: Math.round(balance * classInfo.provRate),
+      balanceOutstanding: Number(l.balance_outstanding ?? 0), daysOverdue,
     }
-
-    LOAN_FIELD_KEYS.forEach((key, idx) => {
-      const cell = row.getCell(idx + 1)
+    for (const [key, col] of Object.entries(colMap)) {
+      const cell = row.getCell(col)
       const v = values[key]
       cell.value = v
       if (typeof v === 'number') cell.numFmt = '#,##0'
       else if (v instanceof Date) cell.numFmt = 'dd/mm/yyyy'
-    })
-    applyZebraRow(row, LOAN_HEADERS.length, i)
+    }
   })
 }
 
-// ── FS (balance sheet) sheet ───────────────────────────────────────────────
-
-const FS_SHEET_NAME = 'A1.2. FS'
-const FS_LABEL_COL = 3
-const FS_FIRST_QUARTER_COL = 4 // D
-const FS_QUARTER_COUNT = 5 // D..H, last one (H) is always the live/requested quarter
-
-const FS_ROW_LABELS = [
-  'Cash in Vault', 'Cash at Bank', 'Term Deposits', 'Gross Loans', 'Loan Loss Provisions',
-  'Net Loans', 'NPLs', 'Fixed Assets (Gross)', 'Accumulated Depreciation', 'Net Fixed Assets',
-  'Interest Receivable', 'Other Assets', 'TOTAL ASSETS', 'Total Liabilities', 'Total Equity',
-  'Retained Profits', 'Profit for Period', 'Paid-up Capital', 'Total Equity & Liabilities',
-]
-const FS_FIRST_ROW = 6
-const BOLD_ROWS = new Set(['TOTAL ASSETS', 'Total Equity & Liabilities'])
-
-// Real historical figures from the official BNR master file (as last filed),
-// keyed by the quarter label they belong to. Only line items that were
-// actually populated in that filing are included — everything else for a
-// historical quarter is left blank rather than guessed.
-const HISTORICAL_FS_DATA: Record<string, Partial<Record<string, number>>> = {
-  'Sep-25': {
-    'Cash at Bank': 9076162, 'Gross Loans': 20200000, 'Fixed Assets (Gross)': 2500000,
-    'Accumulated Depreciation': 0, 'Interest Receivable': 2138440, 'Other Assets': 535234,
-    'Paid-up Capital': 30000000,
-  },
-  'Dec-25': {
-    'Cash at Bank': 11440671, 'Gross Loans': 19924960, 'Fixed Assets (Gross)': 2500000,
-    'Accumulated Depreciation': 500000, 'Interest Receivable': 1405000,
-    'Paid-up Capital': 30000000,
-  },
-  'Mar-26': {
-    'Cash in Vault': 11500, 'Cash at Bank': 3975464, 'Fixed Assets (Gross)': 2500000,
-    'Accumulated Depreciation': 500000, 'Interest Receivable': 50000,
-    'Paid-up Capital': 30000000,
-  },
-  'Jun-26': {
-    'Cash at Bank': 1541804, 'Fixed Assets (Gross)': 2500000, 'Accumulated Depreciation': 500000,
-    'Interest Receivable': 1275153, 'Other Assets': 879680, 'Retained Profits': 1861374,
-    'Paid-up Capital': 30000000,
-  },
-}
-Object.values(HISTORICAL_FS_DATA).forEach(row => {
-  if (row['Fixed Assets (Gross)'] != null && row['Accumulated Depreciation'] != null) {
-    row['Net Fixed Assets'] = row['Fixed Assets (Gross)'] - row['Accumulated Depreciation']
-  }
-})
-
-function quarterLabel(quarter: string): string {
-  const [q, y] = quarter.split('-')
-  const month: Record<string, string> = { Q1: 'Mar', Q2: 'Jun', Q3: 'Sep', Q4: 'Dec' }
-  return `${month[q]}-${y.slice(2)}`
+// ─── Notes sheet, inserted first so it's the first thing anyone sees ────
+function buildNotesSheet(wb: any, quarter: string, notes: Notes) {
+  const ws = wb.addWorksheet('GENERATOR NOTES', { properties: { tabColor: { argb: 'FFFFC000' } } })
+  wb.worksheets.unshift(wb.worksheets.pop())
+  ws.getColumn(1).width = 100
+  ws.getCell(1, 1).value = `Auto-generated notes for the ${quarter} column — read before sending to BNR`
+  ws.getCell(1, 1).font = { bold: true, size: 13 }
+  ws.getCell(2, 1).value = 'Cells highlighted in yellow on the FS sheet correspond to the flagged items below.'
+  let r = 4
+  ws.getCell(r, 1).value = 'Flagged / unconfirmed items:'
+  ws.getCell(r, 1).font = { bold: true }
+  r++
+  for (const n of notes.list) { ws.getCell(r, 1).value = `• ${n}`; ws.getCell(r, 1).alignment = { wrapText: true }; r++ }
+  r++
+  ws.getCell(r, 1).value = 'Rows left blank by design (no data source exists in the current system):'
+  ws.getCell(r, 1).font = { bold: true }
+  r++
+  ws.getCell(r, 1).value = '• FS rows 8, 13, 19, 23(=0), 24, 27, 28, 42-48, 51, 52, 55, 63, 65, 79, 96, 100, 109-111, 118-125, 130-140 — confirmed genuinely blank/zero across all 4 real historical filings, not missing from this generator.'
+  ws.getCell(r, 1).alignment = { wrapText: true }
 }
 
-function quarterRange(quarter: string): { start: Date; end: Date } {
-  const [q, yStr] = quarter.split('-')
-  const y = Number(yStr)
-  const startMonth: Record<string, number> = { Q1: 0, Q2: 3, Q3: 6, Q4: 9 }
-  const start = new Date(y, startMonth[q], 1)
-  const end = new Date(y, startMonth[q] + 3, 0, 23, 59, 59)
-  return { start, end }
-}
+export async function generateBnrReport(quarter: string, baseFileBuffer?: Buffer): Promise<Buffer> {
+  const base = baseFileBuffer ?? (await fetchMostRecentFiledReport())
+  const sanitized = await sanitizeBuffer(base)
 
-function inRange(dateStr: string | null | undefined, start: Date, end: Date): boolean {
-  if (!dateStr) return false
-  const d = new Date(dateStr)
-  return d >= start && d <= end
-}
+  const wb = new ExcelJS.Workbook()
+  await wb.xlsx.load(sanitized as any)
+  flattenSharedFormulas(wb)
 
-// Steps a "Mon-YY" label back by 3 months, so the FS sheet's 5 columns
-// always end with the requested quarter in column H, regardless of which
-// quarter is actually being generated.
-function stepQuarterLabelBack(label: string, stepsBack: number): string {
-  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-  const [monStr, yyStr] = label.split('-')
-  let monthIdx = MONTHS.indexOf(monStr)
-  let year = 2000 + Number(yyStr)
-  let totalMonths = year * 12 + monthIdx - stepsBack * 3
-  const newYear = Math.floor(totalMonths / 12)
-  const newMonth = ((totalMonths % 12) + 12) % 12
-  return `${MONTHS[newMonth]}-${String(newYear).slice(2)}`
-}
+  const notes = makeNotes()
+  const allLoans = await fetchLoanData()
+  const reportDate = quarterEndDate(quarter)
 
-function buildFsSheet(wb: any, requestedLabel: string, liveValues: Record<string, number | null>) {
-  const ws = wb.addWorksheet(FS_SHEET_NAME)
-  ws.views = [{ state: 'frozen', ySplit: 3 }]
+  await fillFsSheet(wb, quarter, allLoans, notes)
 
-  ws.getColumn(FS_LABEL_COL).width = 34
-  for (let c = FS_FIRST_QUARTER_COL; c < FS_FIRST_QUARTER_COL + FS_QUARTER_COUNT; c++) ws.getColumn(c).width = 16
-
-  ws.getCell(1, 1).value = 'NAME OF THE NDFSP: INEMA FINANCIAL SOLUTIONS LTD'
-  ws.getCell(2, 1).value = 'DISTRICT: NYARUGENGE'
-
-  const quarterLabels: string[] = []
-  for (let i = FS_QUARTER_COUNT - 1; i >= 0; i--) quarterLabels.push(stepQuarterLabelBack(requestedLabel, i))
-
-  const headerRow = ws.getRow(3)
-  const denomCell = headerRow.getCell(FS_LABEL_COL)
-  denomCell.value = 'DENOMINATION'
-  applyHeaderStyle(denomCell)
-  quarterLabels.forEach((label, i) => {
-    const cell = headerRow.getCell(FS_FIRST_QUARTER_COL + i)
-    cell.value = label
-    applyHeaderStyle(cell)
-  })
-  headerRow.height = 22
-
-  FS_ROW_LABELS.forEach((label, i) => {
-    const r = FS_FIRST_ROW + i
-    const row = ws.getRow(r)
-    const labelCell = row.getCell(FS_LABEL_COL)
-    labelCell.value = label
-    if (BOLD_ROWS.has(label)) labelCell.font = { bold: true }
-
-    quarterLabels.forEach((qLabel, qi) => {
-      const col = FS_FIRST_QUARTER_COL + qi
-      const isLiveColumn = qLabel === requestedLabel && qi === quarterLabels.length - 1
-      const value = isLiveColumn ? liveValues[label] : HISTORICAL_FS_DATA[qLabel]?.[label]
-      const cell = row.getCell(col)
-      if (value !== null && value !== undefined) {
-        cell.value = Math.round(value)
-        cell.numFmt = '#,##0'
-        if (BOLD_ROWS.has(label)) cell.font = { bold: true }
-      }
-    })
-    applyZebraRow(row, FS_FIRST_QUARTER_COL + FS_QUARTER_COUNT - 1, i)
-  })
-}
-
-export async function generateBnrReport(quarter: string): Promise<Buffer> {
-  const supabase = createAdminClient()
-
-  const { data: loans } = await supabase.from('iacm_loans').select('*, iacm_clients(*)')
-  const { data: payments } = await supabase.from('iacm_payments').select('*')
-  const { data: expenses } = await supabase.from('iacm_expenses').select('*')
-
-  const allLoans = loans ?? []
-  const allPayments = payments ?? []
-  const allExpenses = expenses ?? []
-  const today = new Date()
-  const { start: qStart, end: qEnd } = quarterRange(quarter)
-  const reportDate = qEnd
-
-  const dayBucket = (l: any) => getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), today)
-  const buckets: Record<keyof typeof LOAN_SHEET_NAMES, any[]> = {
+  // Same fix as fillFsSheet: classify as of the report's own quarter-end
+  // date, not the real current date.
+  const dayBucket = (l: any) => getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), reportDate)
+  const buckets = {
     normal: allLoans.filter(l => dayBucket(l) === 0),
     watch: allLoans.filter(l => { const d = dayBucket(l); return d >= 1 && d < 90 }),
     substandard: allLoans.filter(l => { const d = dayBucket(l); return d >= 90 && d < 180 }),
     doubtful: allLoans.filter(l => { const d = dayBucket(l); return d >= 180 && d < 360 }),
     loss: allLoans.filter(l => dayBucket(l) >= 360),
   }
-
-  // Ledger balances (opening balance + journal movements up to the quarter
-  // end). null means the account has no opening balance row and no journal
-  // entries yet — genuinely untracked, so that FS row stays blank rather
-  // than showing a misleading zero.
-  const ASSET_CODES = ['3010', '3020', '3030', '3040', '3050', '3060', '3210', '3220']
-  const LIABILITY_CODES = ['2030', '2530', '2540', '2550', '2560', '2570', '2580', '2640']
-  const EQUITY_CODES = ['1010', '1050']
-  const allLedgerCodes = [...ASSET_CODES, ...LIABILITY_CODES, ...EQUITY_CODES]
-  const ledgerValues = await Promise.all(allLedgerCodes.map(code => getAccountBalance(code, qEnd)))
-  const ledger: Record<string, number | null> = {}
-  allLedgerCodes.forEach((code, i) => { ledger[code] = ledgerValues[i] })
-
-  const sumBy = (arr: any[], pick: (x: any) => number) => arr.reduce((s, x) => s + pick(x), 0)
-  const sumIfAny = (codes: string[]) => {
-    const present = codes.filter(c => ledger[c] !== null)
-    if (present.length === 0) return null
-    return present.reduce((s, c) => s + (ledger[c] ?? 0), 0)
+  for (const key of Object.keys(CLASS_INFO) as Array<keyof typeof CLASS_INFO>) {
+    await fillClassificationSheet(wb, CLASS_INFO[key].sheet, CLASS_INFO[key], (buckets as any)[key], reportDate, reportDate, notes)
   }
 
-  const outstandingBalance = sumBy(allLoans, l => Number(l.balance_outstanding ?? 0))
-  const nonNormalBuckets = [...buckets.watch, ...buckets.substandard, ...buckets.doubtful, ...buckets.loss]
-  const nplBalance = sumBy(nonNormalBuckets, l => Number(l.balance_outstanding ?? 0))
-  const loanLossProvisions =
-    (Object.keys(LOAN_SHEET_NAMES) as Array<keyof typeof LOAN_SHEET_NAMES>)
-      .reduce((s, key) => s + sumBy(buckets[key], l => Number(l.balance_outstanding ?? 0) * CLASS_INFO[key].provRate), 0)
-  const netLoans = outstandingBalance - loanLossProvisions
-
-  const paymentsThisQuarter = allPayments.filter(p => inRange(p.payment_date, qStart, qEnd))
-  const expensesThisQuarter = allExpenses.filter(e => inRange(e.expense_date, qStart, qEnd))
-  const interestIncome = sumBy(paymentsThisQuarter, p => Number(p.interest_portion ?? 0))
-  const feesIncome = sumBy(paymentsThisQuarter, p => Number(p.fee_portion ?? 0))
-  const totalExpensesThisQuarter = sumBy(expensesThisQuarter, e => Number(e.amount ?? 0))
-  const profitForPeriod = interestIncome + feesIncome - totalExpensesThisQuarter
-
-  // 3220 (Accumulated Depreciation) is a contra-asset — getAccountBalance
-  // already returns it as a positive number on its own (credit) normal
-  // side, so it's subtracted from gross PPE here, not added.
-  const netFixedAssets = ledger['3210'] !== null ? ledger['3210'] - (ledger['3220'] ?? 0) : null
-
-  const totalLiabilities = sumIfAny(LIABILITY_CODES)
-  const totalEquityLedgerOnly = sumIfAny(EQUITY_CODES)
-  const totalEquity = totalEquityLedgerOnly !== null ? totalEquityLedgerOnly + profitForPeriod : null
-
-  // Net loans (not gross) roll into total assets — gross loans and loan loss
-  // provisions are informational rows only, matching standard balance-sheet
-  // convention (and the original BNR template's own total-assets formula).
-  // Loan Issued (3110) is deliberately excluded from this ledger sum —
-  // iacm_loans is already the source of truth for the live loan portfolio
-  // (netLoans, above); including 3110 too would double-count the same
-  // loans under two different sources.
-  const assetRows: (number | null)[] = [ledger['3010'], ledger['3020'], null, netLoans, netFixedAssets, ledger['3030'], sumIfAny(['3040', '3050', '3060'])]
-  const totalAssets = assetRows.some(v => v !== null) ? assetRows.reduce((s: number, v) => s + (v ?? 0), 0) : null
-
-  const totalEquityAndLiabilities = (totalLiabilities !== null || totalEquity !== null)
-    ? (totalLiabilities ?? 0) + (totalEquity ?? 0)
-    : null
-
-  const liveValues: Record<string, number | null> = {
-    'Cash in Vault': ledger['3010'],
-    'Cash at Bank': ledger['3020'],
-    'Term Deposits': null,
-    'Gross Loans': outstandingBalance,
-    'Loan Loss Provisions': loanLossProvisions,
-    'Net Loans': netLoans,
-    'NPLs': nplBalance,
-    'Fixed Assets (Gross)': ledger['3210'],
-    'Accumulated Depreciation': ledger['3220'],
-    'Net Fixed Assets': netFixedAssets,
-    'Interest Receivable': ledger['3030'],
-    'Other Assets': sumIfAny(['3040', '3050', '3060']),
-    'TOTAL ASSETS': totalAssets,
-    'Total Liabilities': totalLiabilities,
-    'Total Equity': totalEquity,
-    'Retained Profits': ledger['1050'],
-    'Profit for Period': profitForPeriod,
-    'Paid-up Capital': ledger['1010'],
-    'Total Equity & Liabilities': totalEquityAndLiabilities,
-  }
-
-  const wb = new ExcelJS.Workbook()
-
-  buildFsSheet(wb, quarterLabel(quarter), liveValues)
-  ;(Object.keys(LOAN_SHEET_NAMES) as Array<keyof typeof LOAN_SHEET_NAMES>).forEach(key => {
-    buildLoanSheet(wb, LOAN_SHEET_NAMES[key], CLASS_INFO[key], buckets[key], reportDate, today)
-  })
+  buildNotesSheet(wb, quarter, notes)
 
   const buffer = await wb.xlsx.writeBuffer()
   return buffer as any
+}
+
+async function fetchMostRecentFiledReport(): Promise<Buffer> {
+  const supabase = createAdminClient()
+  const { data: reports } = await supabase.from('iacm_bnr_filed_reports').select('*').order('period_end_date', { ascending: false }).limit(1)
+  const latest = (reports ?? [])[0]
+  if (!latest) throw new Error('No filed BNR report found to use as a base — upload at least one via the Filed Reports feature first.')
+  const { data, error } = await supabase.storage.from('bnr-filed-reports').download(latest.storage_path)
+  if (error || !data) throw new Error(`Failed to download base report: ${error?.message}`)
+  return Buffer.from(await data.arrayBuffer())
 }

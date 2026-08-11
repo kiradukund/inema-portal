@@ -152,6 +152,38 @@ export async function getAccountBalance(code: string, asOfDate: Date): Promise<n
   return toNaturalBalance(account, openingDebit + entryDebit, openingCredit + entryCredit)
 }
 
+// Sum of movements for income-statement accounts (7xxx income, 6xxx
+// expense) between two dates inclusive — a period FLOW, not a point-in-
+// time balance. Deliberately separate from getAccountBalance(): these
+// codes aren't in CHART_OF_ACCOUNTS (that boundary is intentional, see its
+// comment) since income/expense accounts have no opening-balance concept
+// to protect against double-counting, and the LEDGER_CUTOFF_DATE guard
+// doesn't apply here for the same reason — there's no separate pre-cutoff
+// income snapshot this could double-count against. Used by the BNR
+// report's Income Statement section, which reports year-to-date
+// cumulative figures (confirmed by cross-checking real filed quarters
+// against real ledger data — see docs/known-gaps.md or the report
+// generator's own comments for the specific verification).
+export async function getAccountMovementSum(
+  codes: string[],
+  fromDate: Date,
+  toDate: Date,
+  side: NormalSide
+): Promise<number> {
+  const supabase = createAdminClient()
+  const { data, error } = await supabase
+    .from('iacm_journal_lines')
+    .select('debit_amount, credit_amount, iacm_journal_entries!inner(entry_date)')
+    .in('account_code', codes)
+    .gte('iacm_journal_entries.entry_date', fromDate.toISOString().split('T')[0])
+    .lte('iacm_journal_entries.entry_date', toDate.toISOString().split('T')[0])
+  if (error) throw new Error(`getAccountMovementSum(${codes.join(',')}): query failed: ${error.message}`)
+
+  const debit = (data ?? []).reduce((s, r: any) => s + Number(r.debit_amount ?? 0), 0)
+  const credit = (data ?? []).reduce((s, r: any) => s + Number(r.credit_amount ?? 0), 0)
+  return side === 'debit' ? debit - credit : credit - debit
+}
+
 export interface TrialBalanceRow extends Account {
   balance: number | null
 }

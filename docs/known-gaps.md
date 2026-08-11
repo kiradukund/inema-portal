@@ -45,3 +45,23 @@ UI-recorded loans.
   alongside interest.
 
 Not started. Not part of the 2026-08-10 journal schema fix.
+
+## Opening balances aligned to official BNR filings, not internal ledger reconciliation
+
+**Decided:** 2026-08-11, by Kevin.
+
+iacm_opening_balances (2030 Shareholders' Loan, 3020 Bank Accounts) was
+deliberately set to match the four real BNR filings (Sep 2025 - Jun 2026)
+exactly, rather than the internally-reconciled ledger figures. This means
+the Shareholders' Loan (1,500,000) and its corresponding cash no longer
+appear anywhere on the dashboard or balance sheet — not because the loan
+isn't real, but because it was never disclosed in any of the four real
+filings, and Kevin chose official-filing alignment over internal
+completeness.
+
+**Also fixed as part of this change**: 3010 Cash on Hand had a pre-existing
+data-entry error (recorded as a credit instead of debit, showing -30,000)
+— corrected to 0, matching both the real filing and basic correctness.
+
+**Flag for Devotha**: if the shareholders' loan should be disclosed in a
+future BNR filing, this decision will need to be revisited alongside her.

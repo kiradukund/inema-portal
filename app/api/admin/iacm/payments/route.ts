@@ -3,12 +3,28 @@ import { createAdminClient } from '@/lib/supabase'
 import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 import { postJournalEntry, type JournalLineInput } from '@/lib/ledger'
+import { MONTHLY_INTEREST_RATE, UPFRONT_FEE_RATE, VAT_RATE } from '@/lib/calculator'
+
+// Full calendar months between two dates, floored (e.g. 22-Jan to 23-Mar =
+// 2, 09-Mar to 02-Jun = 2 -- day-of-month precision, not a rough diff).
+// Confirmed against 3 real historical catch-up repayments (BIZIMANA Andre,
+// ARMAND, STELLA) -- matches cleanly for loans with a clean payment
+// history. Real bookkeeping sometimes charges more months than a pure
+// date formula implies (irregular history, informal earlier payments not
+// in the system) -- interest_months in the request body overrides this
+// when the admin knows better, same judgment call Devotha's own
+// "Interest Calculations" sheet documents by hand for each case.
+function monthsElapsed(from: Date, to: Date): number {
+  let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+  if (to.getDate() < from.getDate()) months -= 1
+  return Math.max(1, months)
+}
 
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireAdminApi()
     if (!auth.ok) return auth.response
-    const { loan_id, total_amount, payment_date, payment_method, notes } = await req.json()
+    const { loan_id, total_amount, payment_date, payment_method, notes, interest_months } = await req.json()
     if (!loan_id || !total_amount || !payment_date) return err('Missing required fields')
 
     const supabase = createAdminClient()
@@ -20,13 +36,39 @@ export async function POST(req: NextRequest) {
 
     const outstanding = Number(loan.balance_outstanding)
     const disbursed = Number(loan.disbursed_amount)
-    const paid = Math.min(total_amount, outstanding) // Can't overpay
 
-    // Payment allocation: interest first, then principal
-    const monthlyInterest = disbursed * 0.05
-    const interestPortion = Math.min(paid, monthlyInterest)
-    const principalPortion = Math.max(0, paid - interestPortion)
-    const feePortion = 0 // not currently charged on manual IACM payments
+    // Payment allocation: interest first (for every elapsed month since the
+    // last payment, or since disbursement for the first payment -- not
+    // just one month flat), then the fee+VAT receivable set up at
+    // disbursement gets cleared once the loan is fully paid off, then
+    // whatever's left reduces principal. Confirmed against real historical
+    // catch-up repayments -- see monthsElapsed()'s doc comment for the
+    // specific examples this matches.
+    const lastActivityDate = loan.last_payment_date
+      ? new Date(loan.last_payment_date)
+      : new Date(loan.disbursement_date)
+    const months = Number.isFinite(Number(interest_months)) && Number(interest_months) > 0
+      ? Number(interest_months)
+      : monthsElapsed(lastActivityDate, new Date(payment_date))
+    const monthlyInterest = disbursed * MONTHLY_INTEREST_RATE
+    const interestOwed = monthlyInterest * months
+    const feeAndVatOwed = disbursed * UPFRONT_FEE_RATE * (1 + VAT_RATE)
+
+    // "Can't overpay" needs to cap against everything that can actually be
+    // owed on a full payoff (principal + accrued interest + any unpaid
+    // fee/VAT) -- capping against `outstanding` (principal-only) alone
+    // silently discarded the interest/fee portion of a real payoff payment,
+    // exactly the kind of transaction the BIZIMANA/STELLA examples are.
+    const maxOwed = outstanding + interestOwed + feeAndVatOwed
+    const paid = Math.min(total_amount, maxOwed)
+
+    const interestPortion = Math.min(paid, interestOwed)
+    const remainderAfterInterest = paid - interestPortion
+
+    const isPayoff = outstanding - remainderAfterInterest <= 0
+    const feePortion = isPayoff ? Math.min(remainderAfterInterest, feeAndVatOwed) : 0
+    const principalPortion = Math.min(outstanding, Math.max(0, remainderAfterInterest - feePortion))
+
     const newBalance = Math.max(0, outstanding - principalPortion)
     const newPrincipalRepaid = Number(loan.principal_repaid ?? 0) + principalPortion
 

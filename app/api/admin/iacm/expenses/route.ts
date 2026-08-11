@@ -28,8 +28,19 @@ export async function POST(req: NextRequest) {
     // indistinguishable transaction. Account codes/names match Devotha's
     // real chart of accounts.
     try {
+      // Codes verified against the real historical journal (Devotha's actual
+      // bookkeeping): only 6110/6210/6280/6300 have ever actually been used.
+      // 'tax' maps to 2640 (a liability account) because every real
+      // Corporate Income Tax entry in the source file debits 2640, not a
+      // 6xxx expense code — it's a payable being settled, not a P&L expense.
+      // PAYE/Pension/Maternity/CBHI are NOT part of 'tax' — those already
+      // have their own dedicated codes (2540/2550/2560/2570), settled
+      // alongside salary, never through this generic category.
+      // communication/stationery/transport/advertising/legal/maintenance/
+      // petty_cash have no precedent anywhere in the real file — kept as
+      // distinct codes since there's nothing historical to match them to.
       const EXPENSE_ACCOUNTS: Record<string, { code: string; name: string }> = {
-        personnel:     { code: '6100', name: 'Personnel Expenses' },
+        personnel:     { code: '6110', name: 'Salaries & Wages' },
         rent:          { code: '6210', name: 'Rent & Utilities' },
         bank_charges:  { code: '6280', name: 'Bank Charges & Commissions' },
         communication: { code: '6220', name: 'Communication & Internet' },
@@ -39,8 +50,8 @@ export async function POST(req: NextRequest) {
         legal:         { code: '6260', name: 'Legal & Professional Fees' },
         maintenance:   { code: '6270', name: 'Maintenance & Repairs' },
         petty_cash:    { code: '6290', name: 'Petty Cash / Miscellaneous' },
-        tax:           { code: '6300', name: 'Tax Payments (PAYE, RSSB, CBHI)' },
-        other:         { code: '6900', name: 'Other Operating Expenses' },
+        tax:           { code: '2640', name: 'Tax Payable' },
+        other:         { code: '6300', name: 'Miscellaneous Expenses' },
       }
       const amountNum = Number(amount)
       const reference = `expense-${data.id}`

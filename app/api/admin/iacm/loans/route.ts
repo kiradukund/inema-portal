@@ -3,6 +3,7 @@ import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
 import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 import { postJournalEntry } from '@/lib/ledger'
+import { UPFRONT_FEE_RATE, VAT_RATE } from '@/lib/calculator'
 
 export async function POST(req: NextRequest) {
   try {
@@ -98,8 +99,8 @@ export async function POST(req: NextRequest) {
         ? { code: '3010', name: 'Cash on Hand' }
         : { code: '3020', name: 'Bank Accounts' }
       const amount = Number(loan.disbursed_amount)
-      const fee = amount * 0.04
-      const vat = fee * 0.18
+      const fee = amount * UPFRONT_FEE_RATE
+      const vat = fee * VAT_RATE
       const reference = `loan-${newLoan.id}`
       const narration = `Loan disbursed — ${client.full_name} (${loanNumber})`
       const { error: journalErr } = await postJournalEntry(supabase, {

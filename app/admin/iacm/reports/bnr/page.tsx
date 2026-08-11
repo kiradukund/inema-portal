@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const QUARTERS = [
   { value: 'Q1-2026', label: 'Q1 2026 (January — March 2026)' },
@@ -8,6 +8,72 @@ const QUARTERS = [
   { value: 'Q4-2026', label: 'Q4 2026 (October — December 2026)' },
   { value: 'Q1-2027', label: 'Q1 2027 (January — March 2027)' },
 ]
+
+interface FiledReport {
+  id: string
+  quarter: string
+  year: number
+  period_end_date: string
+  original_filename: string
+  uploaded_at: string
+  download_url: string | null
+}
+
+function FiledReports() {
+  const [reports, setReports] = useState<FiledReport[]>([])
+  const [loading, setLoading] = useState(true)
+  const [yearFilter, setYearFilter] = useState('all')
+  const [quarterFilter, setQuarterFilter] = useState('all')
+
+  useEffect(() => {
+    fetch('/api/admin/iacm/reports/bnr/filed')
+      .then(res => res.json())
+      .then(json => setReports(json.data?.reports ?? []))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const years = Array.from(new Set(reports.map(r => r.year))).sort((a, b) => b - a)
+  const quarters = Array.from(new Set(reports.map(r => r.quarter))).sort()
+  const filtered = reports.filter(r =>
+    (yearFilter === 'all' || String(r.year) === yearFilter) &&
+    (quarterFilter === 'all' || r.quarter === quarterFilter)
+  )
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 mt-6">
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-sm font-bold text-slate-700">Filed Reports</p>
+        <div className="flex gap-2">
+          <select className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs"
+            value={yearFilter} onChange={e => setYearFilter(e.target.value)}>
+            <option value="all">All years</option>
+            {years.map(y => <option key={y} value={y}>{y}</option>)}
+          </select>
+          <select className="border border-slate-200 rounded-lg px-2 py-1.5 text-xs"
+            value={quarterFilter} onChange={e => setQuarterFilter(e.target.value)}>
+            <option value="all">All quarters</option>
+            {quarters.map(q => <option key={q} value={q}>{q}</option>)}
+          </select>
+        </div>
+      </div>
+      {loading && <p className="text-xs text-slate-400">Loading…</p>}
+      {!loading && filtered.length === 0 && <p className="text-xs text-slate-400">No filed reports yet.</p>}
+      <div className="space-y-2">
+        {filtered.map(r => (
+          <div key={r.id} className="flex items-center justify-between border border-slate-100 rounded-lg px-4 py-2.5">
+            <div>
+              <p className="text-sm font-semibold text-slate-700">{r.quarter} {r.year}</p>
+              <p className="text-xs text-slate-400">Period end {r.period_end_date} · {r.original_filename}</p>
+            </div>
+            {r.download_url
+              ? <a href={r.download_url} className="text-xs font-semibold text-amber-700 hover:text-amber-800">Download</a>
+              : <span className="text-xs text-slate-300">Unavailable</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export default function BNRReportPage() {
   const [quarter, setQuarter] = useState('Q3-2026')
@@ -108,6 +174,8 @@ export default function BNRReportPage() {
 
         <p className="text-xs text-slate-400 text-center">Downloads as .xlsx — ready to email to BNR at regulation@bnr.rw</p>
       </div>
+
+      <FiledReports />
     </div>
   )
 }

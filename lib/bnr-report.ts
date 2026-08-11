@@ -277,9 +277,14 @@ async function fillFsSheet(wb: any, quarter: string, allLoans: any[], notes: Not
   set(54, provisions) // loan-loss provision expense mirrors the current provisions balance (always 0 in practice so far)
   set(55, null)
   set(56, await getAccountMovementSum([ACCT.salaries], ytdStart, asOf, 'debit'))
+  // Confirmed exact formula: Rent (6210) + Miscellaneous (6300), YTD, net
+  // of credits — reproduces the real Jun-26 filing to the exact rwf
+  // (1,662,187). The earlier "off by 30,000" reading was a bug in the date
+  // range passed to getAccountMovementSum (a timezone conversion issue —
+  // see toLocalDateString() in lib/ledger.ts), not a wrong formula; it was
+  // silently dropping a real 30,000 credit reversal inside 6300.
   const adminExpense = await getAccountMovementSum([ACCT.rent, ACCT.misc], ytdStart, asOf, 'debit')
-  set(57, adminExpense, { unconfirmed: true })
-  notes.push(`FS row 57 (Administrative Expenses): best current hypothesis is Rent (6210) + Miscellaneous (6300), YTD. Tested against real Jun-26 filing: off by 30,000 RWF (1,692,187 computed vs 1,662,187 filed). Verify against real records before relying on this row.`)
+  set(57, adminExpense)
   set(58, null, { unconfirmed: true })
   notes.push(`FS row 58 (Non Operating Expenses): left blank — no schema category exists, but the real Dec-25 filing shows a one-off 22,300 here. Will need manual entry if this recurs.`)
   formula(59, '={COL}50+{COL}54+{COL}56+{COL}57+{COL}58+{COL}55')

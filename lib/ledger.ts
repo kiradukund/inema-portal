@@ -1,5 +1,22 @@
 import { createAdminClient } from './supabase'
 
+// Formats a Date as YYYY-MM-DD using its LOCAL calendar fields, not
+// toISOString() (which is UTC-based). Confirmed real bug: constructing a
+// date via `new Date(year, month, day)` is interpreted in local time, and
+// on this server's timezone (UTC+2), converting that to ISO shifts local
+// midnight back to 22:00 the PREVIOUS day in UTC — so
+// `date.toISOString().split('T')[0]` silently returns the wrong calendar
+// date, one day early, for any locally-constructed date. This isn't a
+// theoretical edge case: it dropped real transactions dated on the exact
+// boundary day of a query range in the BNR report generator (confirmed
+// against real filed figures — see lib/bnr-report.ts).
+export function toLocalDateString(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 export type NormalSide = 'debit' | 'credit'
 
 export interface Account {
@@ -139,7 +156,7 @@ export async function getAccountBalance(code: string, asOfDate: Date): Promise<n
     .select('debit_amount, credit_amount, iacm_journal_entries!inner(entry_date)')
     .eq('account_code', code)
     .gt('iacm_journal_entries.entry_date', LEDGER_CUTOFF_DATE)
-    .lte('iacm_journal_entries.entry_date', asOfDate.toISOString().split('T')[0])
+    .lte('iacm_journal_entries.entry_date', toLocalDateString(asOfDate))
   if (entryError) throw new Error(`getAccountBalance(${code}): iacm_journal_lines query failed: ${entryError.message}`)
 
   if ((openingRows ?? []).length === 0 && (entryRows ?? []).length === 0) return null
@@ -175,8 +192,8 @@ export async function getAccountMovementSum(
     .from('iacm_journal_lines')
     .select('debit_amount, credit_amount, iacm_journal_entries!inner(entry_date)')
     .in('account_code', codes)
-    .gte('iacm_journal_entries.entry_date', fromDate.toISOString().split('T')[0])
-    .lte('iacm_journal_entries.entry_date', toDate.toISOString().split('T')[0])
+    .gte('iacm_journal_entries.entry_date', toLocalDateString(fromDate))
+    .lte('iacm_journal_entries.entry_date', toLocalDateString(toDate))
   if (error) throw new Error(`getAccountMovementSum(${codes.join(',')}): query failed: ${error.message}`)
 
   const debit = (data ?? []).reduce((s, r: any) => s + Number(r.debit_amount ?? 0), 0)

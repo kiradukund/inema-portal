@@ -178,9 +178,26 @@ async function fetchLoanData() {
   return loans ?? []
 }
 
+// Real sheet names carry small, inconsistent whitespace differences across
+// quarters — confirmed via direct inspection of all 4 real filings: e.g.
+// "A1.3. Normal Loans" (Sep-25, Dec-25, Mar-26) vs "A1.3. Normal Loans "
+// with a trailing space (Jun-26 only). wb.getWorksheet() does exact-string
+// matching, so a hardcoded name only works for whichever quarter happened
+// to match it — every other base file silently fails to find the sheet
+// (fillClassificationSheet's own "not found" bailout, no error thrown).
+// Found 2026-08-12 during the final pre-production re-study: generating
+// from any base file except the exact Jun-26 one skipped filling the
+// Normal Loans classification sheet entirely. Match by trimmed name instead.
+function findWorksheet(wb: any, name: string): any {
+  const exact = wb.getWorksheet(name)
+  if (exact) return exact
+  const target = name.trim().toLowerCase()
+  return wb.worksheets.find((s: any) => String(s.name ?? '').trim().toLowerCase() === target)
+}
+
 // ─── FS sheet fill ─────────────────────────────────────────────────────
 async function fillFsSheet(wb: any, quarter: string, allLoans: any[], notes: Notes) {
-  const ws = wb.getWorksheet(FS_SHEET)
+  const ws = findWorksheet(wb, FS_SHEET)
   const label = quarterLabel(quarter)
   const { col, prevCol } = findOrCreateQuarterColumn(ws, label)
   const C = colLetter(col)
@@ -241,7 +258,13 @@ async function fillFsSheet(wb: any, quarter: string, allLoans: any[], notes: Not
   set(8, null) // term deposit — no account, confirmed always blank across all 4 real filings
   formula(5, '={COL}8+{COL}7+{COL}6')
   formula(9, '={COL}93')
-  set(10, provisions)
+  // Real filed pattern (confirmed 4/4 quarters, own-column value): this row
+  // is always left genuinely blank, never a literal 0, even in quarters
+  // where provisions are 0 — unlike rows 42-48/55 below, which is 0 in 3/4
+  // quarters. Write the real computed figure only once it's nonzero (i.e.
+  // once classification produces real provisions), matching how every real
+  // filing to date has actually looked.
+  set(10, provisions || null)
   formula(11, '={COL}9-{COL}10')
   formula(12, '=SUM({COL}89:{COL}92)')
   set(13, null)
@@ -266,7 +289,19 @@ async function fillFsSheet(wb: any, quarter: string, allLoans: any[], notes: Not
   set(27, null); set(28, null)
   set(29, null, { unconfirmed: true }) // "Other Equity" — real historical value once matched Shareholders' Loan, not a stable pattern; left blank, flagged
   notes.push(`FS row 29 (Other Equity): no confirmed source — historically inconsistent across filings (one quarter matched the Shareholders' Loan balance, which doesn't generalize). Left blank.`)
-  set(30, await getAccountBalance(ACCT.retainedEarnings, asOf))
+  // Confirmed real pattern (Jun-26 filing, cached values): row 30 does NOT
+  // track account 1050's live, continuously-updated balance — it's
+  // effectively FROZEN at whatever the prior column already reported.
+  // Real F30 (Mar-26) = 1,861,374 = real E31 (Dec-25's own Profit/loss for
+  // the period) + a one-time 1,800 correction; real G30 (Jun-26) = same
+  // 1,861,374 as F30, completely unchanged despite Jun-26 posting real
+  // profit (G31/G66 = 3,156,630.4) — i.e. retained earnings only moves via
+  // a deliberate manual closing entry, not automatically each quarter.
+  // Reading account 1050's live balance (5,018,004.4) reflects the ledger's
+  // own running total, which is a different concept from what this row
+  // reports. Carry forward the prior column's value, matching real
+  // confirmed practice, until a real closing entry changes it.
+  formula(30, '={PREVCOL}30')
   formula(31, '={COL}66')
   set(32, await getAccountBalance(ACCT.paidUpCapital, asOf))
   formula(33, '={COL}26+{COL}21')
@@ -281,14 +316,27 @@ async function fillFsSheet(wb: any, quarter: string, allLoans: any[], notes: Not
   // exact rwf) ──
   set(40, await getAccountMovementSum([ACCT.interestIncome], ytdStart, asOf, 'credit'))
   set(41, await getAccountMovementSum([ACCT.feeIncome], ytdStart, asOf, 'credit'))
-  ;[42, 43, 44, 45, 46, 47, 48].forEach(r => set(r, null)) // confirmed always 0/blank across all 4 real filings
+  // No live data source for any of these income categories (INEMA has
+  // never earned deposit/instrument/recovery/other income) — but unlike
+  // most no-source rows, the real filed value is consistently a literal 0,
+  // not blank (3 of 4 real filings; the 4th, Mar-26, is the one exception).
+  // Writing 0 here matches confirmed real practice more closely than
+  // leaving these blank.
+  ;[42, 43, 44, 45, 46, 47, 48].forEach(r => set(r, 0))
   formula(39, '={COL}40+{COL}41+{COL}42+{COL}43+{COL}44')
   formula(49, '={COL}39+{COL}45+{COL}47+{COL}48+{COL}46')
   formula(50, '={COL}53+{COL}52+{COL}51')
   set(51, null); set(52, null)
   set(53, await getAccountMovementSum([ACCT.bankCharges], ytdStart, asOf, 'debit'))
-  set(54, provisions) // loan-loss provision expense mirrors the current provisions balance (always 0 in practice so far)
-  set(55, null)
+  // Confirmed real formula pattern (Dec-25 filing): "=COL10-D10", i.e. this
+  // period's provisions balance MINUS the prior period's — a delta, not the
+  // flat balance. Matches the Explanatory Notes' own text for this row:
+  // "when the loan provisions has been reduced compared to prior report
+  // provision, the difference is recognised." Currently always 0 either
+  // way (provisions are 0 while every loan defaults to Normal), but a flat
+  // balance would overstate this row the moment provisions become nonzero.
+  formula(54, '={COL}10-{PREVCOL}10')
+  set(55, 0) // no write-off tracking; real filed value is 0 in 3/4 quarters, not blank — see row 42-48 comment
   set(56, await getAccountMovementSum([ACCT.salaries], ytdStart, asOf, 'debit'))
   // Confirmed exact formula: Rent (6210) + Miscellaneous (6300), YTD, net
   // of credits — reproduces the real Jun-26 filing to the exact rwf
@@ -410,28 +458,57 @@ const LOAN_FIELD_KEYS = [
   'installmentsPaid', 'installmentsOutstanding', 'amountRepaid', 'balanceOutstanding', 'eligibleCollateral', 'netAmountDue', 'daysOverdue', 'classCol', 'provRateCol', 'provRequired',
   'prevProvisions', 'addlProvisions',
 ]
+// Matched against normalized real header text (see normalizeHeader below), not
+// paraphrased column names — the real BNR template text was confirmed via
+// direct inspection of all 4 filed reports' Normal/Watch/Substandard/Doubtful/
+// Loss sheets. An earlier version of this map used exact strings that didn't
+// match the real header text at all (e.g. "date of maturity" vs the real
+// "Agreed Maturity Date", "amount disbursed" vs real "Disbursed amount",
+// "district"/"sector"/"cell"/"village" vs real "Borrower's District" etc.) —
+// since the lookup was a strict equality check, every one of those columns
+// was silently never written into any generated classification sheet. Found
+// 2026-08-12 during the final pre-production re-study; every entry below was
+// re-derived from the real header row text, not guessed.
 const HEADER_TEXT_TO_KEY: Record<string, string> = {
   'no': 'no', 'names of borrowers': 'name', 'id of the borrower': 'nationalId', 'telephone number': 'phone',
   'gender': 'gender', 'age': 'age', 'marital status (married/single/widow)': 'marital',
   'previous loans paid on time (yes/no)': 'prevLoansPaid', 'purpose of the loan': 'purpose',
-  'type of collateral': 'collateralType', 'amount of collateral': 'collateralAmount',
-  'district': 'district', 'sector': 'sector', 'cell': 'cell', 'village': 'village',
-  'annual interest rate': 'annualRate', 'interest calculation method': 'method', 'loan officer': 'officer',
-  'amount disbursed': 'disbursedAmount', 'date of disbursement': 'disbursementDate', 'date of maturity': 'maturityDate',
-  'balance outstanding': 'balanceOutstanding', 'days in arrears': 'daysOverdue',
+  'collateral type': 'collateralType', 'guarantee(collateral) ammount': 'collateralAmount',
+  "borrower's district": 'district', "borrower's sector": 'sector', "borrower's cell": 'cell', "borrower's village": 'village',
+  'annual interest rate': 'annualRate', 'method of interest rate calculation (flat/declining)': 'method',
+  'names of the loan officer': 'officer',
+  'disbursed amount': 'disbursedAmount', 'date of loan disbursement': 'disbursementDate', 'agreed maturity date': 'maturityDate',
+  'balance outstanding (principal)': 'balanceOutstanding', 'number of days overdue (arrears)': 'daysOverdue',
+}
+
+// Real header text varies slightly quarter-to-quarter and sheet-to-sheet —
+// confirmed real examples: double internal spaces ("Round Number of
+// Installments  paid"), inconsistent trailing spaces ("Eligible Collateral
+// provided " vs no trailing space), case variance ("Disbursed amount" vs
+// "Disbursed Amount"), and a mojibake byte in the "Relationship..." column
+// that isn't even the same across sheets. Normalizing (strip non-ASCII,
+// lowercase, trim, collapse internal whitespace) before lookup makes the
+// match robust to all of these instead of requiring a byte-exact string.
+function normalizeHeader(s: string): string {
+  return String(s ?? '')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[^\x20-\x7e]/g, '')
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, ' ')
 }
 
 function findHeaderRow(ws: any): number {
   for (let r = 1; r <= 15; r++) {
     for (let c = 1; c <= 10; c++) {
-      if (String(ws.getRow(r).getCell(c).value ?? '').toLowerCase().includes('names of borrowers')) return r
+      if (normalizeHeader(ws.getRow(r).getCell(c).value).includes('names of borrowers')) return r
     }
   }
   return 10
 }
 
 async function fillClassificationSheet(wb: any, sheetName: string, classInfo: { classNumber: number; provRate: number }, loans: any[], reportDate: Date, today: Date, notes: Notes) {
-  const ws = wb.getWorksheet(sheetName)
+  const ws = findWorksheet(wb, sheetName)
   if (!ws) { notes.push(`Sheet "${sheetName}" not found in base file — skipped.`); return }
   const headerRow = findHeaderRow(ws)
   const dataStartRow = headerRow + 2
@@ -439,12 +516,19 @@ async function fillClassificationSheet(wb: any, sheetName: string, classInfo: { 
   const colMap: Record<string, number> = {}
   const hRow = ws.getRow(headerRow)
   for (let c = 1; c <= hRow.cellCount; c++) {
-    const text = String(hRow.getCell(c).value ?? '').trim().toLowerCase()
+    const text = normalizeHeader(hRow.getCell(c).value)
     const key = HEADER_TEXT_TO_KEY[text]
     if (key) colMap[key] = c
   }
 
-  const clearEnd = Math.max(ws.rowCount, dataStartRow + loans.length + 5)
+  // NOT Math.max(ws.rowCount, ...): ws.rowCount reflects the sheet's full
+  // ~1400-row extent, most of which is the (now-stripped) Excel Table's
+  // per-row template formulas, not real loan data — confirmed via direct
+  // inspection of the real Jun-26 filing (Table4202210, rows 12-1401).
+  // Clearing all the way to ws.rowCount would wipe unrelated sheet content
+  // far beyond any realistic loan count. A generous fixed buffer is enough
+  // to clean up a shrinking loan list between quarters.
+  const clearEnd = dataStartRow + Math.max(loans.length, 50) + 5
   for (let r = dataStartRow; r <= clearEnd; r++) {
     for (const c of Object.values(colMap)) ws.getRow(r).getCell(c).value = null
   }
@@ -453,24 +537,40 @@ async function fillClassificationSheet(wb: any, sheetName: string, classInfo: { 
     const r = dataStartRow + i
     const row = ws.getRow(r)
     const client = l.iacm_clients ?? {}
-    const daysOverdue = Math.max(0, getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), today))
+    const cap = (s: string) => s ? s.charAt(0).toUpperCase() + s.slice(1).toLowerCase() : s
     const values: Record<string, any> = {
       no: i + 1, name: client.full_name ?? '', nationalId: client.national_id ?? '', phone: client.phone ?? '',
-      gender: client.gender ?? '', age: client.age ?? '', marital: client.marital_status ?? '',
+      gender: cap(client.gender ?? ''), age: client.age ?? '', marital: cap(client.marital_status ?? ''),
       prevLoansPaid: client.previous_loans_paid === 'yes' ? 'yes' : client.previous_loans_paid === 'no' ? 'no' : 'not applicable',
-      purpose: l.purpose ?? '', collateralType: l.collateral_type ?? '', collateralAmount: Number(l.collateral_amount ?? 0),
-      district: client.district ?? '', sector: client.sector ?? '', cell: client.cell ?? '', village: client.village ?? '',
-      annualRate: `${Math.round(Number(l.interest_rate ?? 0) * 12 * 100)}%`, method: l.interest_method === 'declining' ? 'Declining' : 'Flat',
+      purpose: l.purpose ?? '', collateralType: l.collateral_type ?? '',
+      // Real filed pattern (21/21 loans, Jun-26): blank, not 0, when no
+      // collateral amount is on file — there's no collateral_amount tracking
+      // for any real loan today.
+      collateralAmount: l.collateral_amount != null ? Number(l.collateral_amount) : null,
+      district: (client.district ?? '').toUpperCase(), sector: (client.sector ?? '').toUpperCase(),
+      cell: (client.cell ?? '').toUpperCase(), village: (client.village ?? '').toUpperCase(),
+      // Real filed pattern: a genuine percentage-formatted number (0.6 with
+      // a "0%" numFmt), not a literal "60%" text string — confirmed via
+      // direct inspection (real cell value 0.6, not the string "60%").
+      annualRate: Number(l.interest_rate ?? 0) * 12,
+      method: l.interest_method === 'declining' ? 'Declining' : 'Flat',
       officer: l.loan_officer ?? '', disbursedAmount: Number(l.disbursed_amount ?? 0),
       disbursementDate: l.disbursement_date ? new Date(l.disbursement_date) : null,
       maturityDate: l.maturity_date ? new Date(l.maturity_date) : null,
-      balanceOutstanding: Number(l.balance_outstanding ?? 0), daysOverdue,
+      balanceOutstanding: Number(l.balance_outstanding ?? 0),
+      // Real filed pattern (confirmed 100% blank across all 3 checked real
+      // quarters — Dec-25, Mar-26, Jun-26 — every loan, overdue or not):
+      // this column is never actually filled in by the real filer. Real
+      // days-overdue evidence used elsewhere (docs/known-gaps.md) is
+      // computed independently from maturity_date, not read from this cell.
+      daysOverdue: null,
     }
     for (const [key, col] of Object.entries(colMap)) {
       const cell = row.getCell(col)
       const v = values[key]
       cell.value = v
-      if (typeof v === 'number') cell.numFmt = '#,##0'
+      if (key === 'annualRate') cell.numFmt = '0%'
+      else if (typeof v === 'number') cell.numFmt = '#,##0'
       else if (v instanceof Date) cell.numFmt = 'dd/mm/yyyy'
     }
   })

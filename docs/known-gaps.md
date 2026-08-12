@@ -188,6 +188,87 @@ account or narration, and 6 of 8 show an exact clean multiple of monthly
 interest (2×, 2×, 2×, 2×, 4×, 2×). Matches `payments/route.ts`'s existing
 `monthsElapsed × 5%` logic exactly. No gap, no change needed.
 
+## FS row 17/18 split — Interest Receivable vs Other Assets
+
+**Found:** 2026-08-12, during the final pre-production re-study's full
+live-data generation test (base = real Mar-26 filing, generated column =
+Jun-26, compared cell-by-cell against the real archived Jun-26 filing).
+
+**What the evidence shows:** the live ledger's account 3030 (Accounts
+Receivable — Interest and Fees) and accounts 3040/3050/3060 (Other
+Receivables/Prepaid/Caution) sum to the exact same combined total as the
+real filing's row 17 ("Interest receivable") + row 18 ("Other Assets")
+combined — 2,154,833.4 both ways, exact match. But the SPLIT between the
+two rows differs by 469,640 in opposite directions:
+
+| Row | Real filed | Generated (live ledger) |
+|---|---|---|
+| 17. Interest receivable | 1,275,153.4 | 1,744,793.4 |
+| 18. Other Assets | 879,680 | 410,040 |
+
+This means some real transaction(s) totaling 469,640 are booked to account
+3030 in the live ledger but were reported under "Other Assets" (not
+"Interest receivable") in the real Jun-26 filing — a categorization
+question, not a missing-data problem. Needs Devotha to say which real
+transactions those are and whether the account code or the FS-row mapping
+should change. Not implemented in code — no safe way to guess which
+transactions to reclassify.
+
+## FS rows 40/41 — Interest and Fee income YTD gap
+
+**Found:** 2026-08-12, same test as above.
+
+Real filed (Jun-26): Interest Income 6,487,353.4, Fees & Commissions
+1,652,000. Generated (live ledger, YTD sum of accounts 7010/7020):
+6,437,353.4 and 1,839,253 — off by -50,000 and +187,253 respectively (not
+a matched swap like rows 17/18 above; two separate gaps). Given the
+documented "Fee + VAT not captured at loan disbursement" gap above, VAT
+being commingled into 7020 was checked as a hypothesis (187,253 / 1,652,000
+≈ 11.3%, not the documented 18% VAT rate) — doesn't cleanly explain it.
+Needs Devotha's bookkeeping review of what specific YTD transactions
+account for the gap. Not implemented — no safe way to guess.
+
+## FS rows 77/78 — Men/Women portfolio value split
+
+**Found:** 2026-08-12, same test. Real filed: Men 20,458,732 / Women
+9,128,720. Generated (live `iacm_clients.gender` on outstanding loans):
+Men 20,610,026 / Women 8,977,426. Both totals sum to the identical
+29,587,452 (matches row 87 exactly, confirming total portfolio value is
+correct) — the discrepancy (151,294 both ways) is one or more loans
+recorded with a different gender in the live system than what was filed in
+Jun-26. Needs Devotha to confirm which client(s); not guessed in code.
+
+## Two clients with swapped balance_outstanding values
+
+**Found:** 2026-08-12, same test, via per-loan ID-matched comparison of the
+Normal Loans classification sheet. INDERE Serge (ID 1198980053193010) and
+UMURORE Brigitte (ID 1196370001014280) show balances that are exactly
+swapped between the real Jun-26 filing and the live system:
+
+| Client | Real filed balance | Live system balance |
+|---|---|---|
+| INDERE Serge | 348,706 | 500,000 |
+| UMURORE Brigitte | 500,000 | 348,706 |
+
+Every other field for both loans matches. This looks like a real data-entry
+mix-up (two loan records' balances swapped) rather than a mapping bug —
+worth Devotha confirming which figure is correct for each client before
+correcting `iacm_loans`. Not corrected here since guessing which of the two
+numbers is right for which client isn't safe.
+
+## Classification-sheet cosmetic formatting noise — not a gap, no action needed
+
+**Found:** 2026-08-12, same test. A meaningful fraction of the per-loan
+field "mismatches" seen in the raw comparison are not data problems: the
+real filed sheets are inconsistent in their OWN capitalization from row to
+row (e.g. some loans show gender as "Male", others "male"; district as
+"GASABO" in one row and "Gasabo" in another, within the same real filing).
+The generator now capitalizes gender/marital status and upper-cases
+district/sector/cell/village to match the more common real convention, but
+since the real file itself isn't internally consistent, an exact 21-for-21
+match isn't achievable without literally copying each human filer's
+arbitrary per-row choice. Treated as expected noise, not pursued further.
+
 ## WE (Women Entrepreneurs) count rows — resolved
 
 **Found & fixed:** 2026-08-11/12. Confirmed the WE count (FS rows

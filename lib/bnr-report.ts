@@ -15,6 +15,15 @@ const { normalizeRelativeTargets, stripExcelTables, resolveExternalLinks, stripT
 // residual unconfirmed items (row 57, WE counts, historical-quarter
 // reconstruction limit).
 
+// Real number/date formats, confirmed stable across all 4 real filings
+// (checked every populated FS leaf cell and every classification-sheet
+// disbursed-amount/date cell in all 4 quarters). The generator previously
+// used plain '#,##0' and 'dd/mm/yyyy' — visually similar but not what the
+// real template actually uses (accounting format shows negatives in
+// parens and zero as "-"; dates render as "6-Apr-26", not "06/04/2026").
+const ACCOUNTING_FMT = '_(* #,##0_);_(* \\(#,##0\\);_(* "-"??_);_(@_)'
+const DATE_FMT = 'd-mmm-yy'
+
 const FS_SHEET = 'A1.2. FS'
 const FS_LABEL_COL = 3
 const FS_DATA_START_COL = 4 // D
@@ -153,6 +162,70 @@ function findOrCreateQuarterColumn(ws: any, label: string): { col: number; prevC
 // overwriting G9 alone broke H9/I9). Fix: immediately after load, rewrite
 // every formula cell in every sheet as an independent (non-shared) formula
 // with the same resolved text, before any of this module's own writes.
+// ExcelJS represents data validations internally as a per-cell map, not a
+// range. When it re-serializes a large contiguous validation range (e.g.
+// the real template's collateral-type dropdown, L12:L1400) it sometimes
+// splits it into two overlapping <dataValidation> elements instead of one
+// (confirmed via direct inspection: always splits at row 100, e.g.
+// "L100:L1400" + "L12:L1400" — the first fully contained in the second).
+// Both rules define the identical dropdown, so this doesn't corrupt data
+// or produce a wrong dropdown, and it doesn't compound across repeated
+// regenerations (confirmed via 3 successive round trips, stays at 2, never
+// grows) — but it's needless duplicate XML from an ExcelJS write-time
+// quirk, not something the real template ever had. Merge same-rule
+// entries back into one per sheet after every write.
+async function dedupeDataValidations(buf: Buffer): Promise<Buffer> {
+  const zip = await JSZip.loadAsync(buf)
+  const colLetterOf = (ref: string) => (ref.match(/^[A-Z]+/) || [''])[0]
+  const rowOf = (ref: string) => parseInt((ref.match(/\d+/) || ['0'])[0], 10)
+
+  for (const name of Object.keys(zip.files)) {
+    if (!/^xl\/worksheets\/sheet\d+\.xml$/.test(name)) continue
+    const file = zip.file(name)
+    if (!file) continue
+    const xml = await file.async('string')
+    const blockMatch = xml.match(/<dataValidations[^>]*>([\s\S]*?)<\/dataValidations>/)
+    if (!blockMatch) continue
+
+    const entries = Array.from(blockMatch[1].matchAll(/<dataValidation\b([^>]*)\bsqref="([^"]+)"([^>]*)>([\s\S]*?)<\/dataValidation>|<dataValidation\b([^>]*)\bsqref="([^"]+)"([^>]*)\/>/g))
+    if (entries.length < 2) continue
+
+    type Entry = { attrsBefore: string; sqref: string; attrsAfter: string; inner: string; selfClosing: boolean }
+    const parsed: Entry[] = entries.map(m => m[2] !== undefined
+      ? { attrsBefore: m[1], sqref: m[2], attrsAfter: m[3], inner: m[4], selfClosing: false }
+      : { attrsBefore: m[5], sqref: m[6], attrsAfter: m[7], inner: '', selfClosing: true })
+
+    const groups = new Map<string, Entry[]>()
+    for (const e of parsed) {
+      const key = `${e.attrsBefore}|${e.attrsAfter}|${e.inner}`
+      const list = groups.get(key) ?? []
+      list.push(e)
+      groups.set(key, list)
+    }
+
+    let changed = false
+    const merged: Entry[] = []
+    for (const list of Array.from(groups.values())) {
+      if (list.length === 1) { merged.push(list[0]); continue }
+      changed = true
+      const col = colLetterOf(list[0].sqref.split(':')[0])
+      const rows = list.flatMap(e => e.sqref.split(':').map(rowOf))
+      const minRow = Math.min(...rows)
+      const maxRow = Math.max(...rows)
+      merged.push({ ...list[0], sqref: `${col}${minRow}:${col}${maxRow}` })
+    }
+    if (!changed) continue
+
+    const serialize = (e: Entry) => e.selfClosing
+      ? `<dataValidation${e.attrsBefore}sqref="${e.sqref}"${e.attrsAfter}/>`
+      : `<dataValidation${e.attrsBefore}sqref="${e.sqref}"${e.attrsAfter}>${e.inner}</dataValidation>`
+    const newBlock = `<dataValidations count="${merged.length}">${merged.map(serialize).join('')}</dataValidations>`
+    zip.file(name, xml.replace(blockMatch[0], newBlock))
+  }
+
+  return zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 } })
+}
+
 function flattenSharedFormulas(wb: any) {
   for (const ws of wb.worksheets) {
     ws.eachRow((row: any) => {
@@ -212,7 +285,7 @@ async function fillFsSheet(wb: any, quarter: string, allLoans: any[], notes: Not
   const set = (row: number, value: number | string | null, opts?: { unconfirmed?: boolean }) => {
     const cell = ws.getRow(row).getCell(col)
     cell.value = value
-    if (typeof value === 'number') cell.numFmt = '#,##0'
+    if (typeof value === 'number') cell.numFmt = ACCOUNTING_FMT
     if (opts?.unconfirmed) flagCell(cell)
   }
   const formula = (row: number, template: string) => {
@@ -570,8 +643,8 @@ async function fillClassificationSheet(wb: any, sheetName: string, classInfo: { 
       const v = values[key]
       cell.value = v
       if (key === 'annualRate') cell.numFmt = '0%'
-      else if (typeof v === 'number') cell.numFmt = '#,##0'
-      else if (v instanceof Date) cell.numFmt = 'dd/mm/yyyy'
+      else if (typeof v === 'number') cell.numFmt = ACCOUNTING_FMT
+      else if (v instanceof Date) cell.numFmt = DATE_FMT
     }
   })
 }
@@ -579,12 +652,31 @@ async function fillClassificationSheet(wb: any, sheetName: string, classInfo: { 
 // ─── Notes sheet, inserted first so it's the first thing anyone sees ────
 function buildNotesSheet(wb: any, quarter: string, notes: Notes) {
   const ws = wb.addWorksheet('GENERATOR NOTES', { properties: { tabColor: { argb: 'FFFFC000' } } })
-  wb.worksheets.unshift(wb.worksheets.pop())
+  // wb.worksheets is a computed getter (sorts a private _worksheets array by
+  // each sheet's own orderNo) — it returns a fresh array every access, so
+  // wb.worksheets.unshift(wb.worksheets.pop()) mutated a throwaway array
+  // and never actually changed serialization order. Confirmed via direct
+  // inspection: the notes sheet was being written LAST, not first as
+  // intended (the very thing this comment says it's for). Set orderNo
+  // directly instead — every other sheet keeps its relative order since
+  // they all move up by the same 1.
+  for (const s of wb.worksheets) { if (s !== ws) s.orderNo += 1 }
+  ws.orderNo = 0
+  // wb.views[0].activeTab is a raw sheet INDEX carried over from the base
+  // file (e.g. "2", meaning whatever sheet used to be third) — inserting a
+  // new first sheet shifts every real sheet's index by 1, so left alone
+  // this would open on the wrong tab (confirmed: pointed at the stale
+  // "A1.3. Normal" duplicate instead of the real Normal Loans sheet in a
+  // direct test). Point it at the notes sheet itself instead, which is
+  // also the more useful default — it's meant to be seen first.
+  if (wb.views?.[0]) wb.views[0].activeTab = 0
   ws.getColumn(1).width = 100
-  ws.getCell(1, 1).value = `Auto-generated notes for the ${quarter} column — read before sending to BNR`
-  ws.getCell(1, 1).font = { bold: true, size: 13 }
-  ws.getCell(2, 1).value = 'Cells highlighted in yellow on the FS sheet correspond to the flagged items below.'
-  let r = 4
+  ws.getCell(1, 1).value = `⚠ INTERNAL REVIEW ONLY — DO NOT SEND THIS SHEET TO BNR (${quarter})`
+  ws.getCell(1, 1).font = { bold: true, size: 14, color: { argb: 'FFC00000' } }
+  ws.getCell(2, 1).value = 'This sheet exists so Kevin/Devotha can review flagged assumptions and known gaps before deciding what to file. Use the "Download for BNR Submission" option to get a copy without this sheet — that is the only version that should ever be sent to the regulator.'
+  ws.getCell(2, 1).alignment = { wrapText: true }
+  ws.getCell(3, 1).value = 'Cells highlighted in yellow on the FS sheet correspond to the flagged items below.'
+  let r = 5
   ws.getCell(r, 1).value = 'Flagged / unconfirmed items:'
   ws.getCell(r, 1).font = { bold: true }
   r++
@@ -597,7 +689,11 @@ function buildNotesSheet(wb: any, quarter: string, notes: Notes) {
   ws.getCell(r, 1).alignment = { wrapText: true }
 }
 
-export async function generateBnrReport(quarter: string, baseFileBuffer?: Buffer): Promise<Buffer> {
+export async function generateBnrReport(
+  quarter: string,
+  baseFileBuffer?: Buffer,
+  opts?: { forSubmission?: boolean }
+): Promise<Buffer> {
   const base = baseFileBuffer ?? (await fetchMostRecentFiledReport())
   const sanitized = await sanitizeBuffer(base)
 
@@ -631,8 +727,20 @@ export async function generateBnrReport(quarter: string, baseFileBuffer?: Buffer
 
   buildNotesSheet(wb, quarter, notes)
 
+  // The notes sheet is internal-review-only — it exists so Kevin/Devotha
+  // can see flagged assumptions and known gaps before deciding what to
+  // file, and must never reach BNR (see docs/known-gaps.md and the sheet's
+  // own header). Building it unconditionally above (both variants share
+  // the exact same fill logic) and removing it here for the submission
+  // variant keeps the two outputs from ever silently diverging in the
+  // data they contain — only this one sheet differs.
+  if (opts?.forSubmission) {
+    const notesWs = wb.worksheets.find((s: any) => s.name === 'GENERATOR NOTES')
+    if (notesWs) wb.removeWorksheet(notesWs.id)
+  }
+
   const buffer = await wb.xlsx.writeBuffer()
-  return buffer as any
+  return dedupeDataValidations(buffer as any)
 }
 
 async function fetchMostRecentFiledReport(): Promise<Buffer> {

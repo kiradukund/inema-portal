@@ -7,12 +7,22 @@ export async function GET(req: NextRequest) {
     const auth = await requireAdminApi()
     if (!auth.ok) return auth.response
     const quarter = req.nextUrl.searchParams.get('quarter') ?? 'Q3-2026'
-    const buffer = await generateBnrReport(quarter)
+    // "submission" produces the exact file that may go to BNR — no
+    // internal notes sheet. Anything else ("internal", or the param
+    // omitted) is for Kevin/Devotha's own review only and must never be
+    // sent to the regulator; the filename itself says so, so the two
+    // variants can't be confused once they're sitting in a Downloads
+    // folder next to each other.
+    const forSubmission = req.nextUrl.searchParams.get('variant') === 'submission'
+    const buffer = await generateBnrReport(quarter, undefined, { forSubmission })
+    const filename = forSubmission
+      ? `INEMA_BNR_Report_${quarter}_FOR_SUBMISSION.xlsx`
+      : `INEMA_BNR_Report_${quarter}_INTERNAL_REVIEW_DO_NOT_SEND.xlsx`
     return new NextResponse(Buffer.from(buffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        'Content-Disposition': `attachment; filename="INEMA_BNR_Report_${quarter}.xlsx"`,
+        'Content-Disposition': `attachment; filename="${filename}"`,
       },
     })
   } catch (e: any) {

@@ -77,9 +77,9 @@ function FiledReports() {
 
 export default function BNRReportPage() {
   const [quarter, setQuarter] = useState('Q3-2026')
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState<'submission' | 'internal' | false>(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState(false)
+  const [success, setSuccess] = useState('')
   const [filedReports, setFiledReports] = useState<FiledReport[]>([])
 
   useEffect(() => {
@@ -102,24 +102,26 @@ export default function BNRReportPage() {
     URL.revokeObjectURL(url)
   }
 
-  async function generate() {
-    setLoading(true); setError(''); setSuccess(false)
+  async function generate(variant: 'submission' | 'internal') {
+    setLoading(variant); setError(''); setSuccess('')
     try {
       // If this quarter was already actually filed with BNR, that real
       // submitted file is the source of truth — serve it byte-for-byte
       // from storage instead of regenerating from today's live data, which
-      // can legitimately differ from what was submitted months ago.
+      // can legitimately differ from what was submitted months ago. That
+      // archived file never had an internal notes sheet, so both buttons
+      // resolve to the same, already-safe download here.
       if (filedForSelection?.download_url) {
         const fileRes = await fetch(filedForSelection.download_url)
         if (!fileRes.ok) throw new Error('filed file fetch failed')
         const blob = await fileRes.blob()
         await downloadBlob(blob, filedForSelection.original_filename)
-        setSuccess(true)
+        setSuccess('Filed report downloaded.')
         setLoading(false)
         return
       }
 
-      const res = await fetch(`/api/admin/iacm/reports/bnr?quarter=${quarter}`)
+      const res = await fetch(`/api/admin/iacm/reports/bnr?quarter=${quarter}&variant=${variant}`)
       const contentType = res.headers.get('content-type') ?? ''
       // fetch() follows redirects transparently, so an expired/invalid admin
       // session can come back as res.ok===true with the login page's HTML
@@ -132,8 +134,13 @@ export default function BNRReportPage() {
         setLoading(false); return
       }
       const blob = await res.blob()
-      await downloadBlob(blob, `INEMA_BNR_Report_${quarter}.xlsx`)
-      setSuccess(true)
+      const filename = variant === 'submission'
+        ? `INEMA_BNR_Report_${quarter}_FOR_SUBMISSION.xlsx`
+        : `INEMA_BNR_Report_${quarter}_INTERNAL_REVIEW_DO_NOT_SEND.xlsx`
+      await downloadBlob(blob, filename)
+      setSuccess(variant === 'submission'
+        ? '✓ Submission-ready file downloaded — no internal notes sheet, safe to send to BNR after your own review.'
+        : '✓ Internal review copy downloaded — includes the GENERATOR NOTES sheet. Do not send this file to BNR.')
     } catch (e) { setError('Failed to generate. Try again.') }
     setLoading(false)
   }
@@ -146,7 +153,7 @@ export default function BNRReportPage() {
       </div>
 
       {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
-      {success && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">✓ Report downloaded successfully. Review before sending to BNR.</div>}
+      {success && <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-green-700 text-sm">{success}</div>}
 
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 space-y-6">
         <div>
@@ -197,14 +204,36 @@ export default function BNRReportPage() {
           </ul>
         </div>
 
-        <button onClick={generate} disabled={loading}
-          className="w-full bg-slate-800 text-white py-3.5 rounded-xl font-bold hover:bg-slate-700 disabled:opacity-60 text-sm flex items-center justify-center gap-2">
-          {loading
-            ? <><span className="animate-spin inline-block">⟳</span> {filedForSelection ? 'Fetching filed report...' : 'Generating Excel file...'}</>
-            : <><span>📥</span> {filedForSelection ? `Download Filed Report — ${quarter}` : `Download BNR Report — ${quarter}`}</>}
-        </button>
+        {filedForSelection ? (
+          <button onClick={() => generate('submission')} disabled={!!loading}
+            className="w-full bg-slate-800 text-white py-3.5 rounded-xl font-bold hover:bg-slate-700 disabled:opacity-60 text-sm flex items-center justify-center gap-2">
+            {loading
+              ? <><span className="animate-spin inline-block">⟳</span> Fetching filed report...</>
+              : <><span>📥</span> Download Filed Report — {quarter}</>}
+          </button>
+        ) : (
+          <>
+            <button onClick={() => generate('submission')} disabled={!!loading}
+              className="w-full bg-green-700 text-white py-3.5 rounded-xl font-bold hover:bg-green-800 disabled:opacity-60 text-sm flex items-center justify-center gap-2">
+              {loading === 'submission'
+                ? <><span className="animate-spin inline-block">⟳</span> Generating...</>
+                : <><span>📥</span> Download for BNR Submission — {quarter}</>}
+            </button>
+            <p className="text-xs text-slate-400 text-center -mt-3">Clean file, no internal notes — this is the one to send to BNR.</p>
 
-        <p className="text-xs text-slate-400 text-center">Downloads as .xlsx — ready to email to BNR at regulation@bnr.rw</p>
+            <div className="border-t border-slate-100 pt-4">
+              <button onClick={() => generate('internal')} disabled={!!loading}
+                className="w-full bg-white text-amber-700 border-2 border-amber-300 py-2.5 rounded-xl font-semibold hover:bg-amber-50 disabled:opacity-60 text-xs flex items-center justify-center gap-2">
+                {loading === 'internal'
+                  ? <><span className="animate-spin inline-block">⟳</span> Generating...</>
+                  : <><span>🔍</span> Download internal review copy (with notes) — {quarter}</>}
+              </button>
+              <p className="text-xs text-amber-600 text-center mt-1.5 font-medium">⚠ Includes flagged assumptions & known gaps for Kevin/Devotha only — never send this version to BNR.</p>
+            </div>
+          </>
+        )}
+
+        <p className="text-xs text-slate-400 text-center">Downloads as .xlsx — review before emailing to BNR at regulation@bnr.rw</p>
       </div>
 
       <FiledReports />

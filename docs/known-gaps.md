@@ -191,8 +191,11 @@ interest (2×, 2×, 2×, 2×, 4×, 2×). Matches `payments/route.ts`'s existing
 ## FS row 17/18 split — Interest Receivable vs Other Assets
 
 **Found:** 2026-08-12, during the final pre-production re-study's full
-live-data generation test (base = real Mar-26 filing, generated column =
-Jun-26, compared cell-by-cell against the real archived Jun-26 filing).
+live-data generation test. **Confirmed as a filing-convention question,
+not a live-system bug: 2026-08-12**, by independently recomputing account
+3030 and 3040/3050/3060 balances directly from the real historical journal
+source file ("inema journal updated as per 2026 (1) until july (2).xlsx")
+rather than the live database.
 
 **What the evidence shows:** the live ledger's account 3030 (Accounts
 Receivable — Interest and Fees) and accounts 3040/3050/3060 (Other
@@ -201,60 +204,194 @@ real filing's row 17 ("Interest receivable") + row 18 ("Other Assets")
 combined — 2,154,833.4 both ways, exact match. But the SPLIT between the
 two rows differs by 469,640 in opposite directions:
 
-| Row | Real filed | Generated (live ledger) |
-|---|---|---|
-| 17. Interest receivable | 1,275,153.4 | 1,744,793.4 |
-| 18. Other Assets | 879,680 | 410,040 |
+| Row | Real filed | Live system | Source journal file (recomputed independently) |
+|---|---|---|---|
+| 17. Interest receivable (3030) | 1,275,153.4 | 1,744,793.4 | 1,744,793.4 |
+| 18. Other Assets (3040+3050+3060) | 879,680 | 410,040 | 410,040 |
 
-This means some real transaction(s) totaling 469,640 are booked to account
-3030 in the live ledger but were reported under "Other Assets" (not
-"Interest receivable") in the real Jun-26 filing — a categorization
-question, not a missing-data problem. Needs Devotha to say which real
-transactions those are and whether the account code or the FS-row mapping
-should change. Not implemented in code — no safe way to guess which
-transactions to reclassify.
+**The source journal file agrees with the live system, not the real
+filing.** This rules out a live-system backfill error — the live database
+is a faithful, correct reflection of the real historical bookkeeping
+journal. The real Jun-26 BNR filing itself categorized ~469,640 of
+receivables differently than how INEMA's own day-to-day journal records
+them, most likely a filing-time judgment call (e.g. moving a specific
+overdue/doubtful receivable into a different bucket) that isn't reflected
+in the underlying ledger. Needs Devotha to say whether that reclassification
+was a deliberate filing decision worth repeating, or an error in the
+archived Jun-26 filing. Not implemented in code — no safe way to guess
+which receivables should move between the two categories.
 
 ## FS rows 40/41 — Interest and Fee income YTD gap
 
-**Found:** 2026-08-12, same test as above.
+**Found:** 2026-08-12, same test as above. **Traced to specific
+transactions and partially fixed: 2026-08-12**, by cross-checking every
+real interest/fee transaction in the historical journal source file
+("inema journal updated as per 2026 (1) until july (2).xlsx") against
+`iacm_journal_entries` / `iacm_journal_lines` line by line, not just
+comparing totals.
 
-Real filed (Jun-26): Interest Income 6,487,353.4, Fees & Commissions
-1,652,000. Generated (live ledger, YTD sum of accounts 7010/7020):
-6,437,353.4 and 1,839,253 — off by -50,000 and +187,253 respectively (not
-a matched swap like rows 17/18 above; two separate gaps). Given the
-documented "Fee + VAT not captured at loan disbursement" gap above, VAT
-being commingled into 7020 was checked as a hypothesis (187,253 / 1,652,000
-≈ 11.3%, not the documented 18% VAT rate) — doesn't cleanly explain it.
-Needs Devotha's bookkeeping review of what specific YTD transactions
-account for the gap. Not implemented — no safe way to guess.
+**The source file's own totals match the real Jun-26 BNR filing exactly**
+(Interest 6,487,353.4, Fees 1,652,000, both to the rwf) — unlike the row
+17/18 case above, this rules out a filing-convention question. The gap was
+entirely between the live database and its own real source file, i.e. a
+genuine backfill gap.
 
-## FS rows 77/78 — Men/Women portfolio value split
+**Interest income — fixed, now exact.** The source file had a real
+interest repayment from MUHORAKEYE Providence on 2026-05-27 (50,000) that
+didn't exist in `iacm_journal_entries`/`iacm_journal_lines` — never
+backfilled. Added the missing entry (2-line: 3020 debit 50,000 / 7010
+credit 50,000, matching the file exactly). **Verified after the fix: live
+7010 total for Jan-Jun 2026 = 6,487,353.4, exact match to the source file
+and the real filing.**
 
-**Found:** 2026-08-12, same test. Real filed: Men 20,458,732 / Women
-9,128,720. Generated (live `iacm_clients.gender` on outstanding loans):
-Men 20,610,026 / Women 8,977,426. Both totals sum to the identical
-29,587,452 (matches row 87 exactly, confirming total portfolio value is
-correct) — the discrepancy (151,294 both ways) is one or more loans
-recorded with a different gender in the live system than what was filed in
-Jun-26. Needs Devotha to confirm which client(s); not guessed in code.
+**Fee income — 96 of the 187,253 gap fixed, 187,157 remains, genuinely
+unresolvable without Devotha:**
 
-## Two clients with swapped balance_outstanding values
+1. **Fixed: two wrong backfill amounts, corrected to match the full real
+   disbursement entries (not just the fee line — pulling the complete
+   5-line real entries revealed the principal/bank/AR/VAT lines and the
+   entry dates were also off by small amounts, not just the fee):**
 
-**Found:** 2026-08-12, same test, via per-loan ID-matched comparison of the
-Normal Loans classification sheet. INDERE Serge (ID 1198980053193010) and
-UMURORE Brigitte (ID 1196370001014280) show balances that are exactly
-swapped between the real Jun-26 filing and the live system:
+   | | Was (backfill estimate) | Now (real file) |
+   |---|---|---|
+   | Desire Demino, entry date | 2026-02-12 | **2026-02-13** |
+   | — AR (3030) | 70,885 | **70,800** |
+   | — Loan Issued (3110) | 1,501,800 | **1,500,000** |
+   | — Bank (3020) | 1,501,800 | **1,500,000** |
+   | — Fee (7020) | 60,072 | **60,000** |
+   | — VAT (2530) | 10,813 | **10,800** |
+   | Habimana Emmanuel, entry date | 2026-04-06 | **2026-04-08** |
+   | — AR (3030) | 47,228 | **47,200** |
+   | — Loan Issued (3110) | 1,000,600 | **1,000,000** |
+   | — Bank (3020) | 1,000,600 | **1,000,000** |
+   | — Fee (7020) | 40,024 | **40,000** |
+   | — VAT (2530) | 7,204 | **7,200** |
 
-| Client | Real filed balance | Live system balance |
-|---|---|---|
-| INDERE Serge | 348,706 | 500,000 |
-| UMURORE Brigitte | 500,000 | 348,706 |
+   Both entries' 5 lines were deleted and replaced whole (not
+   field-patched) so nothing was left half-corrected; both re-verified as
+   balanced (debits = credits) after the fix.
 
-Every other field for both loans matches. This looks like a real data-entry
-mix-up (two loan records' balances swapped) rather than a mapping bug —
-worth Devotha confirming which figure is correct for each client before
-correcting `iacm_loans`. Not corrected here since guessing which of the two
-numbers is right for which client isn't safe.
+2. **187,157 rwf, three backfilled fee entries with no real file
+   confirmation at all — NOT fixed, needs Devotha, left exactly as-is
+   per explicit instruction not to guess:**
+   - Bigirimana Desire: backfilled fee 120,000 (2026-04-02)
+   - Aimee Marie Kobisinge / "Marie Kobusinge" in the file: backfilled
+     fee 40,024 (2026-04-06)
+   - Muhorakeye Providence: backfilled fee 27,133 (2026-05-27, her own
+     disbursement — separate from the missing 5/27 interest repayment
+     above, which was a different, later transaction on the same client)
+
+   For all three, the source file has zero record of their original
+   loan disbursement or fee — only later repayment activity appears
+   (e.g. Kobusinge's 2026-03-30 repayment reduces her loan balance from
+   ~500,000, implying she was disbursed before the file's Jan-1-2026
+   start). These three backfilled amounts are a prior process's
+   *computed estimate* (each is close to 4% of a plausible principal,
+   consistent with the documented standard fee rate), not a transcribed
+   real figure — there is nothing in either source to confirm or
+   contradict them.
+
+   **Needs Devotha:** were these three loans (all pre-dating the
+   tracked journal) actually charged a fee at disbursement, matching
+   standard practice? If yes, are these three estimated amounts close
+   enough to keep, or does she have the real figures? If these loans
+   were fee-exempt for some reason, the entries should be removed
+   instead.
+
+**Verified after both fixes: live 7020 total for Jan-Jun 2026 =
+1,839,157 (was 1,839,253). Gap vs. the real file's 1,652,000 is now
+exactly 187,157 — precisely the sum of the three unconfirmed estimates
+above, nothing left unexplained.**
+
+**Confirmed no effect on `getAccountBalance()` for any report date ≥
+2026-06-30**: all three corrected/added entries are dated 2026-02-13,
+2026-04-08, and 2026-05-27 — all strictly before `LEDGER_CUTOFF_DATE`
+('2026-06-30'). Queried `iacm_journal_entries` directly with the same
+`entry_date > LEDGER_CUTOFF_DATE` filter `getAccountBalance()` uses and
+confirmed zero of the three touched entries match — they were excluded
+before this fix and remain excluded after it, by construction of the date
+filter itself.
+
+## FS rows 77/78 and the INDERE/UMURORE swap — closed, same root cause, confirmed historical filing error
+
+**Found:** 2026-08-12, same test as above (two apparently separate items:
+a 151,294 Men/Women split discrepancy, and INDERE Serge / UMURORE Brigitte
+showing swapped balances). **Confirmed as one single root cause, and
+closed: 2026-08-12**, by independently tracing both clients' real loan
+principal history in the historical journal source file.
+
+**The journal file proves the live system is correct.** Account 3110
+("Loan issued") entries for each client:
+- **INDERE Serge**: disbursed 500,000 (2026-03-30). Every subsequent
+  repayment in the file (2026-04-21, 2026-05-28, 2026-07-27) posts only to
+  Bank and Interest Income — never a 3110 principal-reduction line. His
+  true outstanding balance per the real journal is unchanged: **500,000**.
+- **UMURORE Brigitte**: disbursed 500,000 (2026-04-22). Two repayments
+  *do* post real principal-reduction lines to 3110: 64,027 (2026-05-29)
+  and 87,267 (2026-06-26). Her true outstanding balance per the real
+  journal is 500,000 − 64,027 − 87,267 = **348,706**.
+
+This exactly matches what the live system already shows (Indere 500,000,
+Brigitte 348,706) and exactly contradicts the real Jun-26 BNR filing,
+which lists Indere at 348,706 and Brigitte at 500,000 — a swap. The real
+filing also lists Indere as Male and Brigitte as female, matching the live
+system's own gender records — so the balance swap in that one archived
+filing is the entire, sole cause of the Men/Women portfolio-value gap too:
+151,294 is exactly the difference between the two clients' true balances
+(500,000 − 348,706), and it's exactly the size of the rows 77/78 gap.
+
+**Conclusion: this is a confirmed, already-submitted data-entry error in
+the archived Jun-2026 BNR filing itself, not a live-system bug.** The live
+system and the independent source journal file agree with each other and
+disagree with that one historical filing. Nothing to fix in `iacm_loans`,
+`iacm_clients`, or the generator — closed from further investigation.
+
+## Balance-sheet accounts (3020, 3030, 3110, 2530) diverge from the source journal file for Jan-Jun 2026 — real, but currently inert
+
+**Found:** 2026-08-12, during the broader file-vs-live reconciliation run
+alongside the items above (every account code, not just 7010/7020,
+compared between the source journal file and `iacm_journal_lines` for
+Jan-Jun 2026).
+
+**What's different:** unlike the income-statement accounts (6110, 6210,
+6280, 6300 — all match the file exactly; 7010/7020 — resolved above),
+several balance-sheet accounts have real, substantial net differences
+between the file and the live journal for Jan-Jun 2026:
+
+| Account | File net | Live net | Diff |
+|---|---|---|---|
+| 2530 VAT Control | -27,312 | -61,017 | -33,705 |
+| 3020 Bank Accounts | 3,071,804 | -1,609,516 | -4,681,320 |
+| 3030 Accounts Receivable | 1,744,793.4 | 1,965,751.4 | 220,958 |
+| 3110 Loan issued | 29,587,452 | 34,218,772 | 4,631,320 |
+
+All four differences trace to the same source: journal entries tagged
+`[backfill: disbursement method assumed bank transfer, not verified]`
+post full 5-line disbursements (principal, fee, VAT, cash, AR) for loans
+whose original disbursement isn't in the source file at all — the same
+three loans identified in the FS rows 40/41 fee-income gap above
+(Bigirimana Desire, Kobisinge/Kobusinge Marie, Muhorakeye Providence),
+plus others. These are estimates for pre-2026 disbursements the tracked
+journal file never captured, not errors introduced during backfill.
+
+**Why this doesn't currently affect any BNR report output:** `getAccountBalance()`
+in `lib/ledger.ts` only counts journal movements *strictly after*
+`LEDGER_CUTOFF_DATE` ('2026-06-30') — everything on or before that date is
+represented by the manually-calibrated `iacm_opening_balances` snapshot
+instead (deliberately aligned to the real BNR filings, see the "Opening
+balances aligned to official BNR filings" entry above). Since all of the
+Jan-Jun 2026 activity discussed here falls on or before the cutoff, none
+of it is actually read for any report as of Jun-2026 or later — the FS
+sheet's cash/AR rows already come from the calibrated opening balance, not
+these journal entries directly. (This is different from 7010/7020, which
+use `getAccountMovementSum()` — deliberately *not* cutoff-protected, since
+income-statement rows are real YTD sums with no separate opening snapshot
+— which is exactly why 7010/7020 needed fixing and this doesn't, yet.)
+
+**Not started, not urgent.** Real and worth knowing about for any future
+work that reconciles the raw ledger independently of the calibrated
+opening balance, but no action needed for BNR reporting unless the cutoff
+date or opening-balance strategy changes.
 
 ## Classification-sheet cosmetic formatting noise — not a gap, no action needed
 

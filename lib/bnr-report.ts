@@ -202,21 +202,34 @@ async function fillFsSheet(wb: any, quarter: string, allLoans: any[], notes: Not
     ws.getRow(row).getCell(col).value = template.replace(/\{COL\}/g, C).replace(/\{PREVCOL\}/g, PC)
   }
 
-  // Day-bucket classification, reused for both the FS classification-total
-  // rows (87-93) and the per-loan classification sheets below. Uses the
-  // REPORT's own quarter-end date, not the real current date — a loan's
-  // overdue status for a given quarter must be evaluated as of that
-  // quarter's end, not as of whenever the report happens to be generated
-  // (confirmed as a real bug: using today's date misclassified loans that
-  // were current as of Jun 30 but have since aged past due by the time
-  // this was tested in August).
+  // Day-bucket classification — kept, NOT used to assign buckets right now.
+  // See buckets below: every loan defaults to Normal as an interim policy
+  // decision (confirmed against real evidence, not a guess — see
+  // docs/known-gaps.md "Loan classification: real filings never use
+  // anything but Normal"). Real day-count math is preserved here in case
+  // that decision is revisited.
   const dayBucket = (l: any) => getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), asOf)
+  void dayBucket // reserved for when/if real day-count classification is reinstated
+
+  // Interim policy (Kevin, 2026-08-12): every real filing submitted to
+  // date classifies every loan as Normal regardless of days overdue — 12
+  // real examples across all 4 filings, up to 325 days overdue, including
+  // a repeat client (ruling out a first-time-only grace explanation). No
+  // documented policy in the real Explanatory Notes sheet explains this;
+  // if anything, the notes' own pre-submission checklist ("Check if Loans
+  // are categorized as per regulation") argues classification SHOULD
+  // follow day-count. Given the gap between documented expectation and
+  // actual filed practice, Kevin chose to match real filed practice, not
+  // the regulation's day-count formula. This is deliberately not the same
+  // as the day-count buckets below being "correct but unused" — it's a
+  // stated simplification, revisit if Devotha's answer or a future policy
+  // change gives a real rule to apply instead.
   const buckets = {
-    normal: allLoans.filter(l => dayBucket(l) === 0),
-    watch: allLoans.filter(l => { const d = dayBucket(l); return d >= 1 && d < 90 }),
-    substandard: allLoans.filter(l => { const d = dayBucket(l); return d >= 90 && d < 180 }),
-    doubtful: allLoans.filter(l => { const d = dayBucket(l); return d >= 180 && d < 360 }),
-    loss: allLoans.filter(l => dayBucket(l) >= 360),
+    normal: allLoans,
+    watch: [] as any[],
+    substandard: [] as any[],
+    doubtful: [] as any[],
+    loss: [] as any[],
   }
   const sumBal = (arr: any[]) => arr.reduce((s, l) => s + Number(l.balance_outstanding ?? 0), 0)
   const provisions = (Object.keys(CLASS_INFO) as Array<keyof typeof CLASS_INFO>)
@@ -498,15 +511,19 @@ export async function generateBnrReport(quarter: string, baseFileBuffer?: Buffer
 
   await fillFsSheet(wb, quarter, allLoans, notes)
 
-  // Same fix as fillFsSheet: classify as of the report's own quarter-end
-  // date, not the real current date.
+  // Interim policy (Kevin, 2026-08-12) — same as fillFsSheet above: every
+  // loan defaults to the Normal classification sheet, matching real filed
+  // practice across all 4 real BNR filings (not day-count, which no real
+  // filing has ever applied — see docs/known-gaps.md). Day-count logic
+  // preserved but unused for now.
   const dayBucket = (l: any) => getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), reportDate)
+  void dayBucket
   const buckets = {
-    normal: allLoans.filter(l => dayBucket(l) === 0),
-    watch: allLoans.filter(l => { const d = dayBucket(l); return d >= 1 && d < 90 }),
-    substandard: allLoans.filter(l => { const d = dayBucket(l); return d >= 90 && d < 180 }),
-    doubtful: allLoans.filter(l => { const d = dayBucket(l); return d >= 180 && d < 360 }),
-    loss: allLoans.filter(l => dayBucket(l) >= 360),
+    normal: allLoans,
+    watch: [] as any[],
+    substandard: [] as any[],
+    doubtful: [] as any[],
+    loss: [] as any[],
   }
   for (const key of Object.keys(CLASS_INFO) as Array<keyof typeof CLASS_INFO>) {
     await fillClassificationSheet(wb, CLASS_INFO[key].sheet, CLASS_INFO[key], (buckets as any)[key], reportDate, reportDate, notes)

@@ -145,18 +145,37 @@ provision) should very much not be in the 0%-provision Normal bucket.
 Every real loan, first-time or repeat, mildly or severely overdue, has
 stayed Normal in every real filing submitted to date.
 
-**What this means for the generator**: `lib/bnr-report.ts`'s day-count
-classification logic (rows 87-93, and the per-loan classification
-sheets) is not wrong on its own arithmetic, but it doesn't match what's
-actually been filed with BNR historically. Implementing a "first loan
-gets grace, repeat loans get strict day-count" rule would be wrong per
-this evidence — it needs to be a direct conversation with Devotha about
-whether classification has ever really been applied in practice, and
-what the real intended rule is, before any change to the bucket logic.
+**Checked the real Explanatory Notes sheet for a documented rationale**
+(2026-08-12, same investigation) — none exists. No mention of a grace
+period, first-loan treatment, or any exception to day-count anywhere in
+its 146 rows. If anything, the notes argue against the observed practice:
+the pre-submission checklist explicitly says "❸ Check if Loans are
+categorized as per regulation," and the notes' own explanatory text for
+rows 79-83 (Watch/Substandard/Doubtful/Loss/Restructured) all say
+"*classified under Normal*" verbatim — a copy-paste artifact that itself
+suggests classification was never carefully differentiated in practice,
+not a documented alternate policy. This is real evidence the gap is
+between BNR's stated expectation and actual filed practice — it doesn't
+resolve *why*, and still needs Devotha.
 
-**Not started. No code change proposed** (the "first-time grace" idea is
-explicitly not implemented, since the evidence contradicts it). Closed
-from the investigation side; open until Devotha weighs in.
+**Interim policy implemented (Kevin, 2026-08-12)**: given 12/12 real
+examples across all 4 filings classify every loan Normal regardless of
+days overdue (up to 325 days), `lib/bnr-report.ts` now defaults every
+loan to the Normal classification for both the FS sheet's rows 87-93 and
+the per-loan classification sheets — Watch/Substandard/Doubtful/Loss
+sheets are correctly left empty, matching real filed practice exactly
+(confirmed: generated row 87 now matches the real Jun-26 filing exactly,
+29,587,452 vs 29,587,452, up from 27,087,452 before this change).
+
+**This is explicitly a deliberate simplification matching real filed
+practice, not a permanent rule.** The real day-count logic
+(`getDaysOverdue`/`dayBucket`) is preserved in the code, just unused —
+if INEMA's real classification practice changes (a policy update, or
+Devotha's answer reveals a real process that should be applied), this
+needs to be revisited and the day-count buckets reinstated.
+
+Closed from the investigation side for now; open if practice changes or
+Devotha's input gives a different real rule to apply.
 
 ## Late payment interest — confirmed, no gap
 

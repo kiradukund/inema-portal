@@ -105,30 +105,79 @@ filings prove *that* something happened, not the full detail of what.
 **Not started.** No code or data change proposed. Closed from the
 investigation side; open until Devotha weighs in.
 
-## Loan classification grace period not modeled
+## Loan classification: real filings never use anything but "Normal" — not a first-time-client grace period
 
-**Found:** 2026-08-11, same investigation as above.
+**Found:** 2026-08-11. **Revised:** 2026-08-12, after Kevin's hypothesis
+(first-time clients get grace treatment, repeat clients follow strict
+day-count) was checked against real evidence across all 4 filings, not
+just the one Habineza example.
 
-**What the real evidence shows:** the real Jun-2026 filing classifies
-HABINEZA's loan as **Normal (0% provision)** even though its own recorded
-maturity (24-Jun-2026) had already passed by 6 days at the report's own
-30-Jun-2026 cutoff. The BNR generator's day-count classification logic
-(`lib/bnr-report.ts`, same buckets as the dashboard's portfolio-risk
-widget) would correctly flag this as 6 days overdue — "Watch, 1-89 days"
-— per pure calendar math, and does. The real filing doesn't.
+**What the real evidence actually shows** — every loan found past its own
+recorded maturity date, in any of the four real filings, classified Normal
+regardless of days overdue or client history:
 
-**Why this matters:** this is real, independent regulatory evidence that
-Devotha's actual classification practice includes some grace period or
-rollover convention before a loan gets reclassified past maturity — not
-a data error in either the filing or the generator, a genuine gap between
-the documented day-count rule and real practice.
+| Filing | Client | Days overdue | Bucket | Previous-loans-paid field |
+|---|---|---|---|---|
+| Dec-2025 | HABIMANA Emmanuel | 92 | Normal | not applicable (first loan) |
+| Dec-2025 | NDAYAMBAJE Edouard | 120 | Normal | not applicable (first loan) |
+| Dec-2025 | HABINEZA Jean Marie | 74 | Normal | not applicable (first loan) |
+| Dec-2025 | BIZIMANA Andre | 74 | Normal | not applicable (first loan) |
+| Dec-2025 | BIGIRIMANA Desire | 273 | Normal | not applicable (first loan) |
+| Dec-2025 | **Desire DEMINO** | 6 | Normal | **"Yes" — a repeat client** |
+| Mar-2026 | HABIMANA Emmanuel | 96 | Normal | not applicable (first loan) |
+| Mar-2026 | NDAYAMBAJE Edouard | 210 | Normal | not applicable (first loan) |
+| Mar-2026 | HABINEZA Jean Marie | 164 | Normal | not applicable (first loan) |
+| Jun-2026 | HABINEZA Jean Marie | 6 | Normal | not applicable (first loan) |
+| Jun-2026 | **BIZIMANA Andre** | **325** | Normal | not applicable (first loan) |
+| Jun-2026 | ABAYISENGA jean claude | 8 | Normal | not applicable (first loan) |
 
-**Do not guess at the grace period length or change the classification
-logic based on this one example.** One data point (6 days, still Normal)
-isn't enough to derive a real rule — needs Devotha's confirmation of what
-the actual grace convention is (a fixed number of days? a case-by-case
-judgment call? tied to the restructuring above rather than a general
-rule?) before `lib/bnr-report.ts`'s bucket logic changes.
+**The first-time-client hypothesis is ruled out by real evidence, not
+confirmed.** Desire Demino is explicitly marked as a *repeat* client
+("previous loans paid" = "Yes") and still stays Normal at 6 days overdue —
+if grace treatment were tied to first-loan status, a repeat client should
+have been reclassified. It wasn't.
 
-**Not started.** No code change proposed. Closed from the investigation
-side; open until Devotha weighs in.
+**The real pattern is much bigger than a grace period**: across all four
+real filings, no loan has ever appeared in the Watch, Substandard,
+Doubtful, or Loss sheets — not even BIZIMANA Andre at 325 days overdue,
+which by the documented day-count rule (180-359 days = Doubtful, 50%
+provision) should very much not be in the 0%-provision Normal bucket.
+Every real loan, first-time or repeat, mildly or severely overdue, has
+stayed Normal in every real filing submitted to date.
+
+**What this means for the generator**: `lib/bnr-report.ts`'s day-count
+classification logic (rows 87-93, and the per-loan classification
+sheets) is not wrong on its own arithmetic, but it doesn't match what's
+actually been filed with BNR historically. Implementing a "first loan
+gets grace, repeat loans get strict day-count" rule would be wrong per
+this evidence — it needs to be a direct conversation with Devotha about
+whether classification has ever really been applied in practice, and
+what the real intended rule is, before any change to the bucket logic.
+
+**Not started. No code change proposed** (the "first-time grace" idea is
+explicitly not implemented, since the evidence contradicts it). Closed
+from the investigation side; open until Devotha weighs in.
+
+## Late payment interest — confirmed, no gap
+
+**Found & closed:** 2026-08-11/12. Kevin's description (a late payment is
+treated as one additional month of 5% interest, not a separate penalty
+fee) checked against 8 real multi-month late-payment examples across the
+real journal — every one uses only standard accounts (Bank, Accounts
+Receivable, Loan Issued, Interest Income), never a separate penalty
+account or narration, and 6 of 8 show an exact clean multiple of monthly
+interest (2×, 2×, 2×, 2×, 4×, 2×). Matches `payments/route.ts`'s existing
+`monthsElapsed × 5%` logic exactly. No gap, no change needed.
+
+## WE (Women Entrepreneurs) count rows — resolved
+
+**Found & fixed:** 2026-08-11/12. Confirmed the WE count (FS rows
+113/114/117) tracks women with a currently-*outstanding* balance, the
+same set as row 74 — verified by reconstructing real per-loan gender and
+balance data directly from the Mar-2026 and Jun-2026 classification
+sheets (2 real women outstanding in Mar-26, 7 in Jun-26, matching row 74
+exactly both times). The real Mar-26 filing's own WE figure (4) doesn't
+match this independently-verified count of 2 — real evidence points to
+that being an error in the Mar-26 filing itself, not a wrong mapping.
+`lib/bnr-report.ts` now sets rows 113/114/117 to the same women-with-
+outstanding-balance count as row 74/78.

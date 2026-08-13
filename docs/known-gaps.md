@@ -4,6 +4,102 @@ Real, confirmed gaps found during development that are deliberately not
 fixed yet — logged here so they don't get lost, with enough context to
 pick up in a future session without re-deriving the diagnosis.
 
+## Exhaustive transaction-by-transaction journal verification — complete
+
+**Done:** 2026-08-12, following up on the interest/fee income fix, at
+Kevin's request for a complete (not sample-based) check of every real
+transaction in the source journal file against `iacm_journal_entries` /
+`iacm_journal_lines`.
+
+**Method:** every live entry falls into one of three groups, each verified
+differently:
+- 159 entries whose `reference` field cites its exact source file row
+  (e.g. `journal-import-row88`) — verified by direct row lookup, no fuzzy
+  matching needed. All 159 confirmed to match the file exactly (line-for-
+  line account codes/amounts, and date). 13 initially looked like
+  mismatches under a naive same-narration grouping, but every one turned
+  out to be the file itself splitting one real transaction across rows
+  with slightly different narration text (rent-recognition entries, a
+  same-transaction line with a typo'd year, salary accrual vs. payment
+  posted as separate real events) — the live data was already correct;
+  the grouping tool wasn't smart enough to see it. Zero real errors in
+  this group.
+- 21 "backfill: disbursement method assumed bank transfer, not verified"
+  entries (fee-estimate disbursements) — checked individually against the
+  file by name. 1 (HABINEZA) is the already-documented restructuring case,
+  out of scope. Of the remaining 20: 16 have real file confirmation (2
+  needed correction — see the FS rows 40/41 entry above, now fixed; 8 are
+  exact; 6 have the right amounts but a date 1-2 days off from the file —
+  see below). 4 have no file record of the original disbursement at all
+  (Bigirimana Desire, Kobisinge Marie, Muhorakeye Providence, Niyitegeka
+  Francine) — already documented as unconfirmable, predates the tracked
+  journal.
+- 23 "[backfill]" repayment entries — checked individually against the
+  file by name, date, and amount. 22 match the file exactly. 1 is new —
+  see below.
+
+**Final tally: 197 of 203 live entries are backed by a real, verified
+match in the source file (195 already exact, 2 corrected this session).
+6 have no real file backing** — the 4 already-documented disbursement
+estimates above, HABINEZA (separately closed), and one newly-found
+phantom entry (below). This matches Kevin's own estimate of 197 real
+transactions exactly.
+
+**This is now a complete verification, not a sample.** No further
+transaction-level study is likely to find anything new in this journal —
+what remains (the disbursement estimates, the date-drift entries, the
+phantom entry below) is fully enumerated and understood, not a gap in
+coverage.
+
+## Minor: 6 disbursement entries dated 1-2 days off from the real file (no report impact)
+
+**Found:** 2026-08-12, during the exhaustive verification above. Bahati
+Eric, Nzungize Emmanuel, Tuyizere Felix, Ntabanganyimana Fabien, Nasabwe
+Alice, and Tuyisenge Matutina Stella (her June 5 disbursement cycle
+specifically — she took two real loans, and this is the second one) all
+have every line amount exactly matching the real file, but the backfilled
+`entry_date` is 1-2 days earlier than the file's real date. Consistent
+enough across multiple entries (always earlier, never later) to suggest a
+systematic date-shift in whatever process originally estimated these, not
+six independent typos — though unlike the Demino/Habimana case, there's
+no amount error alongside it, just the date.
+
+**No BNR report impact:** all six dates stay within the same YTD window
+(Jan-Jun 2026) and don't cross `LEDGER_CUTOFF_DATE`, so `getAccountMovementSum()`
+sums them into the same quarter either way — the 1-2 day shift changes
+nothing in any generated report. Low priority; correcting the six dates
+to match the file exactly is a trivial, zero-risk cleanup whenever it's
+convenient, not urgent.
+
+## New: Muhorakeye Providence's 2026-06-30 repayment entry has no real file backing
+
+**Found:** 2026-08-12, during the exhaustive verification above. A
+"Loan repayment — MUHORAKEYE Providence [backfill]" entry exists dated
+exactly 2026-06-30 (50,000: 3020 debit / 3110 credit — principal
+reduction only, no interest or AR line). Searched the source file
+thoroughly for any Providence-related transaction on or near that date —
+her real activity in the tracked file goes 2026-05-27 (disbursement) then
+skips straight to 2026-07-16 (beyond the current backfill's June 30
+scope). There is no real transaction this entry could correspond to.
+
+**Likely cause:** the same estimation process that produced her
+disbursement fee guess (27,133, already documented as unconfirmed) may
+have also plugged this 50,000 "closing" entry to reconcile her ending
+`iacm_loans.balance_outstanding` against her confirmed real repayments,
+without a real underlying transaction.
+
+**No BNR report impact:** dated exactly at `LEDGER_CUTOFF_DATE`
+('2026-06-30'), and `getAccountBalance()`'s filter is strictly-greater-
+than the cutoff, so this entry has never been counted in any report
+regardless of whether it's real.
+
+**Proposed (not yet applied):** delete this entry and its 2 lines — it
+has zero evidentiary basis, unlike the disbursement estimates which at
+least represent an uncertain amount for a *real* event. If Providence
+made a real payment around that date that Devotha remembers, it should be
+re-added with the real figure instead. Awaiting confirmation before
+touching it.
+
 ## Fee + VAT not captured at loan disbursement
 
 **Found:** 2026-08-10, while verifying the journal entry schema fix

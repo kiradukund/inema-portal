@@ -100,10 +100,29 @@ made a real payment around that date that Devotha remembers, it should be
 re-added with the real figure instead. Awaiting confirmation before
 touching it.
 
-## Fee + VAT not captured at loan disbursement
+## Fee + VAT not captured at loan disbursement — resolved
 
 **Found:** 2026-08-10, while verifying the journal entry schema fix
-against real historical practice.
+against real historical practice. **Resolved:** already fixed in
+commits `7c1a769` ("Capture fee/VAT at disbursement, guard the ledger
+cutoff, backfill real history") and `b5f980b` ("Fix expense account
+codes, multi-month interest, and shared rate constants") — both on
+`origin/master`, predating the 2026-08-12 morning investigation.
+**Confirmed 2026-08-12** by direct code read: this entry had gone stale
+(never updated when the fix landed), not a real remaining gap.
+
+`app/api/admin/iacm/loans/route.ts` now posts the full 5-line
+disbursement entry (AR for fee+VAT, Loan Issued, Bank/Cash, Fee Income,
+VAT Control), computed server-side from `disbursed_amount` using
+`UPFRONT_FEE_RATE`/`VAT_RATE` in `lib/calculator.ts` (0.04/0.18, matching
+the documented real rates) so a tampered client value can't change what
+posts to the ledger. The New Loan form displays the auto-calculated
+fee/VAT for the same figures. `app/api/admin/iacm/payments/route.ts`
+also already resolves the AR-clearing question below — it credits 3030
+(not 7020 again) when a payoff includes the fee portion, with a comment
+citing the real historical example (Nzungize's repayment) it matches.
+
+Original finding preserved below for context.
 
 **What's missing:** every real historical loan (confirmed from the actual
 Jan-June journal, e.g. the STELLA disbursement) charges a 4% fee + 18%
@@ -128,19 +147,19 @@ journal schema mismatch fixed the same night. Interest income posts
 correctly; fee income does not exist anywhere in the system for
 UI-recorded loans.
 
-**Scope for the fix:**
-- Add a fee amount field (or auto-compute 4% of `disbursed_amount`,
-  matching the documented terms) to the New Loan form and its API route.
-- Compute VAT as 18% of that fee.
-- Extend the disbursement `postJournalEntry()` call (`app/api/admin/iacm/loans/route.ts`)
+**Scope for the fix (all items below now done, see resolution note above):**
+- ~~Add a fee amount field (or auto-compute 4% of `disbursed_amount`,
+  matching the documented terms) to the New Loan form and its API route.~~
+- ~~Compute VAT as 18% of that fee.~~
+- ~~Extend the disbursement `postJournalEntry()` call (`app/api/admin/iacm/loans/route.ts`)
   to add the AR / Fees & Commission Income / VAT Control lines, matching
-  the real historical structure above.
-- Confirm whether the corresponding AR-clearing line on repayment
+  the real historical structure above.~~
+- ~~Confirm whether the corresponding AR-clearing line on repayment
   (`app/api/admin/iacm/payments/route.ts`) also needs to be added back —
   real repayments clear this same AR balance as fees get collected
-  alongside interest.
+  alongside interest.~~
 
-Not started. Not part of the 2026-08-10 journal schema fix.
+Closed.
 
 ## Opening balances aligned to official BNR filings, not internal ledger reconciliation
 

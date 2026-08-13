@@ -4,6 +4,48 @@ Real, confirmed gaps found during development that are deliberately not
 fixed yet — logged here so they don't get lost, with enough context to
 pick up in a future session without re-deriving the diagnosis.
 
+## Real historical practice used periodic interest accrual — live system doesn't, and this is a policy question for Devotha
+
+**Found:** 2026-08-13, studying "INEMA JOURNAL AND ACCOUNTS-Updated(1)
+(1)(1)(1).xlsx" (found on Desktop, 3 identical copies by MD5) cell by
+cell against the already-studied source file. Confirmed this is genuinely
+different, older real data — it covers 2025-07-17 to 2025-12-02 (company
+formation through the first ~4.5 months of operation), not a duplicate of
+the Jan-2026-onward file already studied. Very plausibly the source the
+Jan-1-2026 opening balance was rolled up from.
+
+**The real distinction found:** the file shows INEMA originally recognized
+interest via **periodic accrual**, independent of when clients actually
+paid — month-end entries like "Accruing the interest earned up to
+30/09/2025" debit AR and credit 7010 (Interest Income) on a schedule.
+When a payment later arrives, it clears whatever's sitting in AR; 7010 only
+gets credited fresh for interest accrued *since* the last accrual point.
+
+Two concrete examples:
+- Gilbert Kami's first payment (2025-11-24) clears AR for exactly 23,600
+  — his original disbursement fee+VAT, nothing more — and credits 7010
+  fresh for a full month's interest (25,000), since no accrual had
+  happened yet for his loan.
+- Laurance Muhayimpundu's payoff (2025-11-19) clears AR for 145,800 —
+  his original 70,800 fee+VAT *plus* 75,000 already recognized in an
+  earlier accrual cycle — and separately credits 7010 fresh for only
+  75,000 more (the new month since that accrual), not re-recognizing
+  what was already booked.
+
+**This is not accurately described as "first payment vs. installment."**
+The real trigger is whether a periodic accrual entry happened between
+disbursement/last payment and this payment — correlated with payment
+sequence in practice, but a different mechanism. `payments/route.ts`
+today has no accrual concept at all: it computes interest fresh via
+`monthsElapsed()` and credits 7010 directly every time, with no parallel
+accrual process. This means it isn't currently double-counting anything
+(there's nothing accrued to double-count against) — it just doesn't match
+this older, more sophisticated bookkeeping pattern.
+
+**Not implemented.** Whether INEMA should adopt month-end accrual as a
+live, ongoing process is a real bookkeeping-policy decision — needs
+Devotha's direct input, not a unilateral code change.
+
 ## Exhaustive transaction-by-transaction journal verification — complete
 
 **Done:** 2026-08-12, following up on the interest/fee income fix, at

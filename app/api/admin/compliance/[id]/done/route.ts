@@ -4,12 +4,15 @@ import { serverError } from '@/lib/api'
 import { requireAdminApi } from '@/lib/admin'
 
 // Months to advance deadline_date by when a recurring item is marked done.
-// Confirmed against the real seed data (supabase.sql) — these are the only
-// three recurrence values in use (6 monthly_15th, 3 quarterly, 2 annual).
+// monthly_15th/quarterly/annual confirmed against the real seed data
+// (supabase.sql); bi_monthly_1st added 2026-08-13 for Rent Payment (every
+// 2 months, 1st of the month) — day=1 needs no month-length clamping in
+// addMonths() below, so no other logic changes were needed for this.
 const RECURRENCE_MONTHS: Record<string, number> = {
   monthly_15th: 1,
   quarterly: 3,
   annual: 12,
+  bi_monthly_1st: 2,
 }
 
 // Pure integer Y/M/D arithmetic — deliberately never goes through a local

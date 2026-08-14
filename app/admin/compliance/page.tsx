@@ -14,9 +14,18 @@ export default async function AdminCompliance() {
   const pending = all.filter(d => !d.is_done)
   const done = all.filter(d => d.is_done)
 
+  const KNOWN_RECURRENCES = ['monthly_15th', 'bi_monthly_1st', 'quarterly', 'annual']
   const monthly = pending.filter(d => d.recurrence === 'monthly_15th')
+  const biMonthly = pending.filter(d => d.recurrence === 'bi_monthly_1st')
   const quarterly = pending.filter(d => d.recurrence === 'quarterly')
   const annual = pending.filter(d => d.recurrence === 'annual')
+  // Catch-all: a deadline with any recurrence value outside the known set
+  // (a future new pattern, or none at all) still renders here instead of
+  // silently vanishing — this is the second time a hardcoded bucket list
+  // has dropped a real deadline (first the recurrence-advance map in the
+  // "done" route, now this section grouping), so this closes that class
+  // of bug going forward rather than just patching today's instance.
+  const otherRecurring = pending.filter(d => !KNOWN_RECURRENCES.includes(d.recurrence))
 
   function DeadlineCard({ d }: { d: typeof all[0] }) {
     const days = daysUntil(d.deadline_date)
@@ -89,6 +98,15 @@ export default async function AdminCompliance() {
         </div>
       </div>
 
+      {/* Bi-Monthly */}
+      <div className="mb-6">
+        <h2 className="font-bold text-slate-700 text-sm uppercase tracking-wide mb-3">🔁 Bi-Monthly (Due 1st, every 2 months)</h2>
+        <div className="space-y-2">
+          {biMonthly.map(d => <DeadlineCard key={d.id} d={d} />)}
+          {biMonthly.length === 0 && <p className="text-slate-400 text-sm">All bi-monthly obligations up to date ✅</p>}
+        </div>
+      </div>
+
       {/* Quarterly */}
       <div className="mb-6">
         <h2 className="font-bold text-slate-700 text-sm uppercase tracking-wide mb-3">📆 Quarterly</h2>
@@ -106,6 +124,21 @@ export default async function AdminCompliance() {
           {annual.length === 0 && <p className="text-slate-400 text-sm">All annual obligations up to date ✅</p>}
         </div>
       </div>
+
+      {/* Other Recurring — catch-all for any recurrence value outside the
+          known set, so a future new pattern (or a data-entry mistake)
+          shows up here instead of silently not appearing anywhere. */}
+      {otherRecurring.length > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center gap-3 mb-3">
+            <h2 className="font-bold text-slate-700 text-sm uppercase tracking-wide">❓ Other Recurring</h2>
+            <span className="bg-slate-100 text-slate-600 text-xs font-bold px-2 py-1 rounded-full">{otherRecurring.length}</span>
+          </div>
+          <div className="space-y-2">
+            {otherRecurring.map(d => <DeadlineCard key={d.id} d={d} />)}
+          </div>
+        </div>
+      )}
 
       {/* Done */}
       {done.length > 0 && (

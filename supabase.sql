@@ -477,6 +477,10 @@ create table if not exists iacm_clients (
   cell                  text,
   village               text,
   previous_loans_paid   text default 'not_applicable' check (previous_loans_paid in ('yes', 'no', 'not_applicable')),
+  -- Added 2026-08-15 for CRB monthly reporting: assigned sequentially
+  -- (IFS0001, IFS0002, ...) the first time a client is ever included in a
+  -- CRB export, then permanent — never reassigned. See lib/crb-report.ts.
+  account_number        text unique,
   created_at            timestamptz not null default now(),
   updated_at            timestamptz not null default now()
 );

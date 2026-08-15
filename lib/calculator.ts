@@ -120,6 +120,19 @@ export function calculateLateFee(overdueAmount: number, monthsOverdue: number): 
   return Math.round(overdueAmount * LATE_PAYMENT_RATE * monthsOverdue)
 }
 
+// ─── DAYS OVERDUE ────────────────────────────────────────────────────────────
+// Shared by both regulatory report generators (BNR quarterly, CRB monthly).
+// Originally lived only in lib/bnr-report.ts, where it was built but never
+// wired into bucket assignment (BNR defaults every loan to Normal — see that
+// file's comments). Moved here 2026-08-14 so CRB can reuse the exact same
+// logic for its real, computed Days in Arrears — no behavior change to BNR.
+export function getDaysOverdue(maturityDate: string, balance: number, today: Date): number {
+  if (balance <= 0) return -1
+  const maturity = new Date(maturityDate)
+  if (maturity >= today) return 0
+  return Math.floor((today.getTime() - maturity.getTime()) / 86400000)
+}
+
 // ─── FORMAT HELPERS ──────────────────────────────────────────────────────────
 export function formatRWF(amount: number): string {
   return `RWF ${amount.toLocaleString('en-RW')}`

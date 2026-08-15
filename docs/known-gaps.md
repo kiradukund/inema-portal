@@ -575,3 +575,92 @@ match this independently-verified count of 2 — real evidence points to
 that being an error in the Mar-26 filing itself, not a wrong mapping.
 `lib/bnr-report.ts` now sets rows 113/114/117 to the same women-with-
 outstanding-balance count as row 74/78.
+
+## CRB monthly report — fields left genuinely blank, and other real assumptions
+
+**Built:** 2026-08-15, `lib/crb-report.ts`. Unlike BNR (a continuing,
+column-per-quarter document), Kevin's explicit framing is that CRB
+submissions are independent monthly snapshots — every currently-
+outstanding loan (`balance_outstanding > 0`), fresh each run, no carry-
+forward. The generator loads the most recently archived real `.xls` as a
+structural base (74-column Consumer sheet + 6 untouched stub sheets:
+Corporate, Shareholders, Directors, Collateral, Guarantors, Bounced
+Cheques), clears the Consumer sheet's data rows, and rewrites them.
+
+**Fields with no live data source — left blank, need Devotha or the CRB
+guide to resolve:**
+Salutation, Passport No, Nationality, Tax No, Driving License No, Social
+Security Number, Health Insurance Number, No of Dependants, Date of Birth
+(only `age` is tracked, not a real DOB), Place of Birth, Postal Address
+(both lines), Physical Address Line 2/Postal Code/Plot Number, Email
+Address, Residence Type, Fascimile, the entire Employer block (Name,
+Address ×2, Town, Country), Occupation, Income, Income Frequency, Group
+Name/Number, Old Account Number, Joint Loan Participants, Terms Duration,
+Repayment Term (real historical values are "BUL"/"MTH" but no confident
+rule for which applies to a given INEMA loan was found — see below),
+Available Credit, Date Closed (always blank by construction — the
+`balance_outstanding > 0` filter excludes closed loans), Approval Date,
+and Nature/Category/Sector of Activity (Kevin's explicit decision).
+
+**Intentionally NOT replicating known junk from the real historical
+files** (found during the earlier study, see prior session's findings):
+`Interest Rate` was a flat "13" on every real row regardless of the
+client's actual loan — clearly a template artifact, since INEMA's real
+monthly rate is 5% (60%/year). This generator computes the real
+annualized rate instead (`interest_rate × 12 × 100`). `Approval Date` had
+clear junk values ("9300", "0001") — left genuinely blank rather than
+reusing `disbursement_date` under a different label, since INEMA has no
+separate tracked approval step/date. `First/Last/Final Payment Date` were
+identical placeholder values across every row in the real files, some
+chronologically impossible — this generator uses the real
+`iacm_loans.first_payment_date` / `last_payment_date` / `maturity_date`
+columns instead.
+
+**Real, computed (not defaulted) per Kevin's explicit decision:**
+`Days in Arrears` / `Amount Past Due` / `Classification` use
+`getDaysOverdue()` (moved to `lib/calculator.ts`, shared with the BNR
+generator) against each loan's real `maturity_date` and
+`balance_outstanding` — the same 1-89/90-179/180-359/360+ day thresholds
+already described in the BNR report page's UI text. This is a deliberate
+difference from BNR, which defaults every loan to Normal by policy (see
+"Loan classification" above) — CRB has real evidence (Muhorakeye
+Providence, Jul-2026 filing) that arrears are sometimes accurately
+reported, so there's no equivalent "real practice never uses this" basis
+to default here.
+
+**Name splitting (Surname / Forename 1-3):** `iacm_clients` stores one
+`full_name` field, no separate surname/forename columns. The real
+archived files show consistent Rwandan convention — surname first, often
+all-caps, then given names — so this generator splits on whitespace and
+takes the first token as surname, the rest (up to 3) as forenames. A name
+not entered in that order will split wrong; no live data quality check
+enforces surname-first entry today.
+
+**Physical Address Province:** `iacm_clients` has no province field, only
+district/sector/cell/village. Rwanda's district→province mapping is
+fixed public administrative geography (30 districts, 5 provinces + Kigali
+City), so this is hardcoded in `lib/crb-report.ts`, not derived from
+client-specific data.
+
+**Scheduled Monthly Payment Amount:** computed as `disbursed_amount ×
+5%` — INEMA's steady-state (month 2+) monthly interest obligation from
+`lib/calculator.ts`. Month 1's real due amount is higher (includes the 4%
+upfront fee + 18% VAT on that fee) but isn't used here since this column
+represents an ongoing recurring figure, not a specific month's bill.
+
+**Actual Payment Amount:** the most recent `iacm_payments.total_amount`
+for the loan (not a running total — the adjacent Scheduled Payment column
+already represents the recurring figure).
+
+**Installments in Arrears:** approximated as `days_in_arrears ÷
+repayment_frequency_days`, since INEMA's real repayment model (interest
+charged monthly, principal due at maturity) has no formal per-installment
+tracking table to count against directly. Treat as an estimate, not an
+authoritative count.
+
+**Account Number:** `iacm_clients.account_number`, assigned sequentially
+(`IFS0001`, `IFS0002`, ...) the first time a client is included in any
+CRB export, persisted permanently. Migration added to `supabase.sql`
+2026-08-15; needs to be run against the live database (`alter table
+iacm_clients add column if not exists account_number text unique;`)
+before this generator can run.

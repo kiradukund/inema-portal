@@ -37,6 +37,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: '/admin/iacm/expenses/new', icon: '🧾', label: 'Record Expense' },
     { href: '/admin/iacm/journal',      icon: '📒', label: 'Journal' },
     { href: '/admin/iacm/reports/bnr',  icon: '📑', label: 'BNR Report' },
+    { href: '/admin/iacm/reports/crb',  icon: '🗂️',  label: 'CRB Report' },
   ]
 
   return (

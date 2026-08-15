@@ -4,6 +4,7 @@ import ExcelJS from 'exceljs'
 import JSZip from 'jszip'
 import { createAdminClient } from './supabase'
 import { getAccountBalance, getAccountMovementSum } from './ledger'
+import { getDaysOverdue } from './calculator'
 // @ts-ignore
 const { normalizeRelativeTargets, stripExcelTables, resolveExternalLinks, stripThreadedComments } = require('../scripts/lib/xlsx-sanitize')
 
@@ -71,13 +72,6 @@ const CLASS_INFO = {
   loss: { classNumber: 5, provRate: 1.0, sheet: 'A1.7 Loss' },
 } as const
 const CLASS_TOTAL_ROW: Record<keyof typeof CLASS_INFO, number> = { normal: 87, watch: 88, substandard: 89, doubtful: 90, loss: 91 }
-
-function getDaysOverdue(maturityDate: string, balance: number, today: Date): number {
-  if (balance <= 0) return -1
-  const maturity = new Date(maturityDate)
-  if (maturity >= today) return 0
-  return Math.floor((today.getTime() - maturity.getTime()) / 86400000)
-}
 
 function colLetter(col: number): string {
   let s = ''

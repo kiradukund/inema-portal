@@ -664,3 +664,26 @@ CRB export, persisted permanently. Migration added to `supabase.sql`
 2026-08-15; needs to be run against the live database (`alter table
 iacm_clients add column if not exists account_number text unique;`)
 before this generator can run.
+
+**All cell values are written as text, not real numbers — matching the
+real archived file's own convention.** Direct inspection found the
+original file has no true numeric cells anywhere in the Consumer sheet;
+even "Current Balance" reads back as the string `"2000000"`, format code
+`"@"` (Text). The first version of this generator wrote amounts/rates/day
+-counts as real numbers, which visibly right-aligned instead of matching
+every other left-aligned text cell. Fixed 2026-08-16 by writing every
+value as `{ t: 's', z: '@' }`, same as the source file.
+
+**Row heights do not survive regeneration — confirmed unfixable with the
+`xlsx` (SheetJS) library, not a bug in this code.** The real archived file
+has 2 rows (3-4) with an explicit 15.75pt height override; a pure no-op
+test — load the original, change nothing, write it straight back out as
+`.xls` — drops this even with `cellStyles: true` passed to both the read
+and the write. Column widths and number-format codes *are* recoverable
+this way (they were the real cause of the "visual appearance changed"
+report from Kevin on 2026-08-16 — `cellStyles`/`cellNF` weren't being
+passed to `XLSX.read()`, so all 257 of the original's column widths were
+lost before any write even happened, on every sheet including the 6
+untouched stubs). Row height write support for legacy BIFF8 output
+specifically isn't there in this library. Impact is minor — 2 rows, close
+to Excel's default height regardless.

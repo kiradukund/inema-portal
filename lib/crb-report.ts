@@ -289,7 +289,15 @@ export async function generateCrbReport(baseFileBuffer?: Buffer): Promise<CrbGen
   const supabase = createAdminClient()
   const base = baseFileBuffer ?? (await fetchMostRecentFiledCrbReport())
 
-  const wb = XLSX.read(base, { type: 'buffer' })
+  // cellStyles/cellNF: without these, SheetJS's legacy .xls (BIFF8) reader
+  // never populates column widths, per-cell number-format codes, or the
+  // handful of real style refs the archived file carries — confirmed via
+  // direct inspection: a pure no-op read-then-write with these options
+  // omitted dropped all 257 of the original Consumer sheet's column
+  // widths before any write even happened. Every sheet in the workbook
+  // (not just Consumer) is affected, since SheetJS re-serializes the
+  // whole in-memory model on write.
+  const wb = XLSX.read(base, { type: 'buffer', cellStyles: true, cellNF: true })
   const sheetName = findSheetName(wb, CONSUMER_SHEET)
   if (!sheetName) throw new Error(`"${CONSUMER_SHEET}" sheet not found in base file.`)
   const ws = wb.Sheets[sheetName]
@@ -382,11 +390,20 @@ export async function generateCrbReport(baseFileBuffer?: Buffer): Promise<CrbGen
       // genuinely blank. See docs/known-gaps.md.
     }
 
+    // Every populated cell in the real archived file — including amounts,
+    // dates, and codes that look numeric — is stored as text (t:'s',
+    // format "@"), never a real number. Confirmed by direct inspection:
+    // "Current Balance" reads back as the string "2000000", not the
+    // number 2000000. Writing real numbers here made them right-align
+    // instead of left-align like every other cell, a visible difference
+    // scanning down a column — so every value is written as text here,
+    // matching the original's own convention exactly rather than
+    // "improving" on it.
     for (const [key, col] of Object.entries(colMap)) {
       const v = values[key]
       if (v === undefined || v === '') continue
       const addr = XLSX.utils.encode_cell({ r, c: col })
-      ws[addr] = { t: typeof v === 'number' ? 'n' : 's', v }
+      ws[addr] = { t: 's', v: String(v), z: '@' }
     }
   })
 
@@ -396,7 +413,12 @@ export async function generateCrbReport(baseFileBuffer?: Buffer): Promise<CrbGen
     ws['!ref'] = XLSX.utils.encode_range(range)
   }
 
-  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'biff8' }) as Buffer
+  // Row heights do NOT survive this library's BIFF8 writer even with
+  // cellStyles:true on both read and write — confirmed via the same
+  // no-op test above. That's a real, unfixable-with-this-library gap
+  // (2 rows in the real archived file had a non-default height), not
+  // something these options can close. See docs/known-gaps.md.
+  const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'biff8', cellStyles: true }) as Buffer
   const now = new Date()
   const reportingMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
   return {

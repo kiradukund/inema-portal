@@ -127,10 +127,20 @@ export default async function AdminDashboard() {
   ]
 
   // ── Monthly collections, last 6 months ──────────────────────────────────
+  // Real bug, found 2026-08-17: this used to build the filter key via
+  // d.toISOString().slice(0, 7) — on this UTC+2 server, that converts a
+  // locally-constructed "day 1, 00:00 local" Date back into the prior UTC
+  // day, which for day=1 is also the prior month. The bar's label
+  // (MONTH_NAMES[d.getMonth()], a local getter) stayed correct while the
+  // key used to actually filter payments silently shifted back one month
+  // — every bar was showing the previous month's real total under the
+  // current month's label. Same root-cause class as lib/ledger.ts's
+  // toLocalDateString fix: read the key back via local getters, the same
+  // way the Date was constructed, instead of round-tripping through UTC.
   const monthBuckets: { label: string; total: number }[] = []
   for (let i = 5; i >= 0; i--) {
     const d = new Date(today.getFullYear(), today.getMonth() - i, 1)
-    const key = d.toISOString().slice(0, 7)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
     const total = allIacmPayments.filter(p => (p.payment_date ?? '').slice(0, 7) === key).reduce((s, p) => s + Number(p.total_amount ?? 0), 0)
     monthBuckets.push({ label: MONTH_NAMES[d.getMonth()], total })
   }

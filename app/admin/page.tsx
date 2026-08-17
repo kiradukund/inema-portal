@@ -1,6 +1,6 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
-import { getAccountBalance } from '@/lib/ledger'
+import { getAccountBalance, getAccountMovementSum } from '@/lib/ledger'
 import { NET_PROFIT_CUTOFF, NET_PROFIT_BASE_AS_OF_CUTOFF } from '@/lib/net-profit'
 import Link from 'next/link'
 import { MonthlyCollectionsChart, LoanPortfolioDonut } from './DashboardCharts'
@@ -98,11 +98,21 @@ export default async function AdminDashboard() {
     .filter(p => (p.payment_date ?? '') > NET_PROFIT_CUTOFF)
     .reduce((s, p) => s + Number(p.interest_portion ?? 0), 0)
 
+  // Fee + VAT-derived income (7020) is booked to the ledger at disbursement
+  // time, not stored on iacm_payments — it was previously missing from Net
+  // Profit entirely, understating real profit by ~4.72% of every loan
+  // disbursed after the cutoff. Pulled from the real ledger (the same
+  // account the disbursement journal entry already credits), one day after
+  // the cutoff through today, matching the strictly-after-cutoff window
+  // grossIncome/totalExpenses already use.
+  const dayAfterCutoff = new Date(new Date(`${NET_PROFIT_CUTOFF}T00:00:00`).getTime() + 86400000)
+  const feeIncome = await getAccountMovementSum(['7020'], dayAfterCutoff, today, 'credit')
+
   const totalExpenses = allIacmExpenses
     .filter(e => (e.expense_date ?? '') > NET_PROFIT_CUTOFF)
     .reduce((s, e) => s + Number(e.amount ?? 0), 0)
 
-  const netProfit = NET_PROFIT_BASE_AS_OF_CUTOFF + grossIncome - totalExpenses
+  const netProfit = NET_PROFIT_BASE_AS_OF_CUTOFF + grossIncome + feeIncome - totalExpenses
 
   const totalActiveLoans = allIacmLoans.filter(l => l.status === 'active').length
 

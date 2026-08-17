@@ -1,5 +1,6 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient } from '@/lib/supabase'
+import { getAccountMovementSum } from '@/lib/ledger'
 import { NET_PROFIT_CUTOFF, NET_PROFIT_BASE_AS_OF_CUTOFF } from '@/lib/net-profit'
 
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
@@ -73,10 +74,18 @@ export default async function AdminIncome() {
   const postCutoffInterest = allPayments
     .filter(p => (p.payment_date ?? '') > NET_PROFIT_CUTOFF)
     .reduce((s, p) => s + Number(p.interest_portion ?? 0), 0)
+
+  // Fee + VAT-derived income (7020) is booked to the ledger at disbursement
+  // time, not stored on iacm_payments — see app/admin/page.tsx for the full
+  // explanation. Pulled from the real ledger, same window as postCutoffInterest.
+  const today = new Date()
+  const dayAfterCutoff = new Date(new Date(`${NET_PROFIT_CUTOFF}T00:00:00`).getTime() + 86400000)
+  const postCutoffFeeIncome = await getAccountMovementSum(['7020'], dayAfterCutoff, today, 'credit')
+
   const postCutoffExpenses = allExpenses
     .filter(e => (e.expense_date ?? '') > NET_PROFIT_CUTOFF)
     .reduce((s, e) => s + Number(e.amount ?? 0), 0)
-  const netProfit = NET_PROFIT_BASE_AS_OF_CUTOFF + postCutoffInterest - postCutoffExpenses
+  const netProfit = NET_PROFIT_BASE_AS_OF_CUTOFF + postCutoffInterest + postCutoffFeeIncome - postCutoffExpenses
   const totalDisbursed = allIacmLoans.reduce((s, l) => s + Number(l.disbursed_amount ?? 0), 0)
   const totalOutstanding = allIacmLoans.reduce((s, l) => s + Number(l.balance_outstanding ?? 0), 0)
   const activeLoanCount = allIacmLoans.filter(l => l.status === 'active').length

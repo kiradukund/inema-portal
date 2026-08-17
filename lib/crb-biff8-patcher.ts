@@ -216,6 +216,105 @@ export function locateSubstreams(records: Biff8Record[]): { globals: SheetSubstr
   return { globals, sheets }
 }
 
+// ─── Whole-file duplicate-cell-coordinate check ─────────────────────────
+//
+// Added 2026-08-17 after a real bug slipped past every existing self-
+// check: row-removal's renumbering loop only handled LABELSST cells,
+// silently leaving RK/MULRK cells (Classification, rows 1-4) at their
+// stale row number after a removal shifted later rows up. That left a
+// genuine duplicate — two cell records defining the same (row, col) —
+// which every per-operation self-check missed, because each one only
+// verifies its OWN target state, never "does any coordinate on any
+// sheet have more than one definition." This is the whole-file
+// invariant that was missing. Every BIFF8 cell-bearing record type
+// shares a row(2)+col(2) prefix (single-cell types) or row(2)+
+// firstCol(2)...lastCol(2) (multi-cell types, MULRK/MULBLANK) — this
+// checks every sheet, not just Consumer, and every type this codebase
+// has confirmed present or that the spec defines the same way, not
+// only the ones any specific operation happens to touch.
+const SINGLE_CELL_OPCODES = new Set<number>([
+  OPCODE.LABELSST, OPCODE.RK, OPCODE.NUMBER,
+  0x0201 /* BLANK */, 0x0006 /* FORMULA */, 0x0205 /* BOOLERR */, 0x00d6 /* RSTRING */,
+])
+const MULTI_CELL_OPCODES = new Set<number>([OPCODE.MULRK, 0x00be /* MULBLANK */])
+// Every cell-bearing record type this file knows about, single- or
+// multi-cell alike — used wherever code needs "is this record a cell at
+// all," as opposed to the per-column expansion the duplicate checker
+// needs. Sharing this set is what the row-removal fix below relies on:
+// every one of these types stores its row number in the same first 2
+// bytes, so classifying/renumbering by row doesn't need per-type logic.
+const ALL_CELL_OPCODES = new Set<number>([...Array.from(SINGLE_CELL_OPCODES), ...Array.from(MULTI_CELL_OPCODES)])
+
+// Rewrites just the row field (the first 2 bytes) of any cell-bearing
+// record — valid for every type in ALL_CELL_OPCODES, since MS-XLS cell
+// records all share a row(2) + col(2)-or-firstCol(2) prefix. Used for
+// row-removal renumbering, where every OTHER field (column, style,
+// value) must survive completely untouched regardless of the record's
+// specific type.
+function patchCellRow(data: Buffer, newRow: number): Buffer {
+  const out = Buffer.from(data)
+  out.writeUInt16LE(newRow, 0)
+  return out
+}
+
+export interface DuplicateCellCoordinate {
+  sheet: string
+  row: number
+  col: number
+  recordIdxs: number[]
+}
+
+export function findDuplicateCellCoordinates(fileBuffer: Buffer): DuplicateCellCoordinate[] {
+  const { stream } = extractWorkbookStream(fileBuffer)
+  const records = parseBiffRecords(stream)
+  const { sheets } = locateSubstreams(records)
+  const duplicates: DuplicateCellCoordinate[] = []
+
+  for (const sheet of sheets) {
+    const seen = new Map<string, number[]>()
+    for (let i = sheet.startIdx; i <= sheet.endIdx; i++) {
+      const opcode = records[i].opcode
+      const data = records[i].data
+      if (SINGLE_CELL_OPCODES.has(opcode)) {
+        if (data.length < 4) continue
+        const row = data.readUInt16LE(0)
+        const col = data.readUInt16LE(2)
+        const key = `${row},${col}`
+        if (!seen.has(key)) seen.set(key, [])
+        seen.get(key)!.push(i)
+      } else if (MULTI_CELL_OPCODES.has(opcode)) {
+        if (data.length < 6) continue
+        const row = data.readUInt16LE(0)
+        const firstCol = data.readUInt16LE(2)
+        const lastCol = data.readUInt16LE(data.length - 2)
+        for (let c = firstCol; c <= lastCol; c++) {
+          const key = `${row},${c}`
+          if (!seen.has(key)) seen.set(key, [])
+          seen.get(key)!.push(i)
+        }
+      }
+    }
+    for (const [key, idxs] of Array.from(seen.entries())) {
+      if (idxs.length > 1) {
+        const [row, col] = key.split(',').map(Number)
+        duplicates.push({ sheet: sheet.name, row, col, recordIdxs: idxs })
+      }
+    }
+  }
+  return duplicates
+}
+
+// Throws (refuses to proceed) rather than returning a boolean — every
+// other self-check in this file follows the same "abort loudly, never
+// hand back a file that might be wrong" discipline.
+function assertNoDuplicateCellCoordinates(fileBuffer: Buffer, context: string): void {
+  const duplicates = findDuplicateCellCoordinates(fileBuffer)
+  if (duplicates.length > 0) {
+    const sample = duplicates.slice(0, 5).map(d => `${d.sheet}!(${d.row},${d.col}) x${d.recordIdxs.length}`).join('; ')
+    throw new Error(`Self-check failed (${context}): ${duplicates.length} duplicate cell coordinate(s) found — ${sample}${duplicates.length > 5 ? ', ...' : ''}`)
+  }
+}
+
 // ─── SST (shared string table) decoding ─────────────────────────────────
 
 // MS-XLS SST entry ("XLUnicodeRichExtendedString"): cch(2) flags(1)
@@ -303,6 +402,7 @@ export function runStage1ZeroChangePatch(originalFileBuffer: Buffer): Stage1Resu
   // buffer — proves the write path goes through the same record-level
   // code a real edit would use, not just "skip touching it."
   const outBuffer = writeWorkbookStream(container, reserialized)
+  assertNoDuplicateCellCoordinates(outBuffer, 'Stage 1 zero-change patch')
 
   return { buffer: outBuffer, recordCount: records.length, workbookStreamIdentical }
 }
@@ -421,6 +521,7 @@ export function runStage2InPlacePatch(originalFileBuffer: Buffer): Stage2Result 
 
   const reserialized = serializeBiffRecords(patchedRecords)
   const outBuffer = writeWorkbookStream(container, reserialized)
+  assertNoDuplicateCellCoordinates(outBuffer, 'Stage 2 in-place value patch')
 
   return {
     buffer: outBuffer,
@@ -562,6 +663,7 @@ export function runStage3SstGrowthPatch(originalFileBuffer: Buffer, newValue: st
   // stream of a new size. ───────────────────────────────────────────────
   const reserialized = serializeBiffRecords(patchedRecords)
   const outBuffer = writeWorkbookStream(container, reserialized)
+  assertNoDuplicateCellCoordinates(outBuffer, 'Stage 3 SST growth patch')
 
   return {
     buffer: outBuffer,
@@ -857,6 +959,7 @@ export function runStage4NewRowInsert(originalFileBuffer: Buffer): Stage4Result 
   }
 
   const outBuffer = writeWorkbookStream(container, reserialized)
+  assertNoDuplicateCellCoordinates(outBuffer, 'Stage 4 new row insert')
 
   return {
     buffer: outBuffer,
@@ -925,24 +1028,36 @@ export function runStage5RowRemoval(originalFileBuffer: Buffer, targetRow: numbe
   const targetRowRecordIdx = rowRecordIdx.get(targetRow)
   if (targetRowRecordIdx === undefined) throw new Error(`No ROW record found for row ${targetRow}.`)
 
+  // Real bug, found 2026-08-17: this used to only scan LABELSST records,
+  // silently missing RK/MULRK cells (Classification, rows 1-4) on the
+  // target or later rows. A later row's RK cell would keep its stale
+  // row number after everything else on that row correctly renumbered
+  // down — producing two records defining the same (row, col), exactly
+  // what triggered Excel's "some data may have been lost" warning on
+  // the first real live run. Every cell-bearing type shares the same
+  // row(2) prefix, so classifying by row needs no per-type branching.
   const targetCellIdxs: number[] = []
   const headerCellIdxs: number[] = []
   const laterRowCellIdxs: number[] = []
   for (let i = consumer.startIdx; i <= consumer.endIdx; i++) {
-    if (records[i].opcode !== OPCODE.LABELSST) continue
-    const row = decodeLabelSst(records[i].data).row
+    if (!ALL_CELL_OPCODES.has(records[i].opcode)) continue
+    const row = records[i].data.readUInt16LE(0)
     if (row === 0) headerCellIdxs.push(i)
     else if (row === targetRow) targetCellIdxs.push(i)
     else if (row > targetRow) laterRowCellIdxs.push(i)
   }
   if (targetCellIdxs.length === 0) throw new Error(`No cell records found for row ${targetRow}.`)
 
+  // Type-aware value decode for reporting — reuses the same RK/MULRK-
+  // aware scanner the update logic already relies on, rather than a
+  // second, separately-maintained LABELSST-only decode.
+  const headerColMap = findConsumerHeaderColumns(records, consumer, sstStrings)
+  const colToHeader = new Map<number, string>()
+  for (const [h, c] of Object.entries(headerColMap)) colToHeader.set(c, h)
+  const targetRowCells = readRowCells(records, consumer, sstStrings, targetRow)
   const removedFields: Record<string, string> = {}
-  for (const i of targetCellIdxs) {
-    const v = decodeLabelSst(records[i].data)
-    const headerEntry = headerCellIdxs.map(hi => decodeLabelSst(records[hi].data)).find(h => h.col === v.col)
-    const headerText = headerEntry ? sstStrings[headerEntry.sstIndex] : `col${v.col}`
-    removedFields[headerText] = sstStrings[v.sstIndex]
+  for (const [col, cell] of Array.from(targetRowCells.entries())) {
+    removedFields[colToHeader.get(col) ?? `col${col}`] = cell.value
   }
 
   // ── Item 4: which of the removed row's string indices become
@@ -955,7 +1070,12 @@ export function runStage5RowRemoval(originalFileBuffer: Buffer, targetRow: numbe
   // number can have a total usage count of 3 while every one of those 3
   // references still comes from the row being deleted. Correct check is
   // whether ALL references anywhere equal the references from THIS row.
-  const removedRowSstIndices = targetCellIdxs.map(i => decodeLabelSst(records[i].data).sstIndex)
+  // RK/MULRK cells never reference the SST at all, so only the row's
+  // real LABELSST cells are relevant here — filtered explicitly, now
+  // that targetCellIdxs also contains non-LABELSST record indices.
+  const removedRowSstIndices = targetCellIdxs
+    .filter(i => records[i].opcode === OPCODE.LABELSST)
+    .map(i => decodeLabelSst(records[i].data).sstIndex)
   const removedRowUsage = new Map<number, number>()
   for (const idx of removedRowSstIndices) removedRowUsage.set(idx, (removedRowUsage.get(idx) ?? 0) + 1)
   const totalUsage = new Map<number, number>()
@@ -977,7 +1097,11 @@ export function runStage5RowRemoval(originalFileBuffer: Buffer, targetRow: numbe
   const deletions = new Set<number>()
 
   replacements.set(dimIdx, { ...records[dimIdx], data: patchDimensionsRwMac(records[dimIdx].data, dims.rwMac - 1) })
-  const cstTotalAfter = cstTotalBefore - targetCellIdxs.length
+  // Only LABELSST removals actually reduce cstTotal — RK/MULRK cells
+  // were never string references to begin with. targetCellIdxs.length
+  // would over-decrement now that it also includes non-LABELSST cells.
+  const removedLabelSstCount = targetCellIdxs.filter(i => records[i].opcode === OPCODE.LABELSST).length
+  const cstTotalAfter = cstTotalBefore - removedLabelSstCount
   replacements.set(sstIdx, { ...records[sstIdx], data: patchSstCounts(records[sstIdx].data, cstTotalAfter) })
 
   deletions.add(targetRowRecordIdx)
@@ -992,9 +1116,12 @@ export function runStage5RowRemoval(originalFileBuffer: Buffer, targetRow: numbe
       rowsRenumbered++
     }
   }
+  // Every cell-bearing type's row field is the first 2 bytes, so this
+  // renumbers LABELSST, RK, and MULRK cells alike — no type dispatch
+  // needed, and (unlike the old LABELSST-only version) nothing on a
+  // later row is left behind with a stale row number anymore.
   for (const i of laterRowCellIdxs) {
-    const v = decodeLabelSst(records[i].data)
-    replacements.set(i, { ...records[i], data: encodeLabelSst({ ...v, row: v.row - 1 }) })
+    replacements.set(i, { ...records[i], data: patchCellRow(records[i].data, records[i].data.readUInt16LE(0) - 1) })
   }
 
   const removedBytes = (4 + records[targetRowRecordIdx].data.length)
@@ -1087,6 +1214,7 @@ export function runStage5RowRemoval(originalFileBuffer: Buffer, targetRow: numbe
   }
 
   const outBuffer = writeWorkbookStream(container, reserialized)
+  assertNoDuplicateCellCoordinates(outBuffer, 'Stage 5 row removal')
 
   return {
     buffer: outBuffer,
@@ -1480,6 +1608,7 @@ export function applyRowFieldUpdates(originalFileBuffer: Buffer, targetRow: numb
   }
 
   const outBuffer = writeWorkbookStream(container, reserialized)
+  assertNoDuplicateCellCoordinates(outBuffer, 'applyRowFieldUpdates')
   return { buffer: outBuffer, changedFields }
 }
 
@@ -1618,5 +1747,6 @@ export function applyRowInsertion(originalFileBuffer: Buffer, fields: Record<str
   }
 
   const outBuffer = writeWorkbookStream(container, reserialized)
+  assertNoDuplicateCellCoordinates(outBuffer, 'applyRowInsertion')
   return { buffer: outBuffer, newRow: newRowIndex }
 }

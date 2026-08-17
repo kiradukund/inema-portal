@@ -34,22 +34,28 @@ const PROVINCE_BY_DISTRICT: Record<string, string> = {
 // The real header text this generator has a live data source for — the
 // only columns `readConsumerRoster`/`applyRowFieldUpdates` ever touch.
 // Every other real header (Nature, Category, Employer*, Occupation,
-// Income*, Nationality, Salutation, etc.) is deliberately excluded, so
-// a diff-based update never clears or overwrites anything a human may
-// have entered there — see docs/known-gaps.md for the full blank-by-
-// design list and reasoning.
+// Income*, Nationality, etc.) is deliberately excluded, so a diff-based
+// update never clears or overwrites anything a human may have entered
+// there — see docs/known-gaps.md for the full blank-by-design list and
+// reasoning. Salutation and Sector of Activity added 2026-08-17 after a
+// full 74-column audit confirmed real sources exist for both — see the
+// comments on `salutationCode()` and `economicSector` below. Terms
+// Duration and Repayment Term added 2026-08-17 after pulling the live
+// (not the stale tracked supabase.sql) schema found a real column,
+// iacm_loans.total_installments, that was missing from every earlier
+// pass — see the comments on those two fields in computeFieldValues().
 const HEADERS_OF_INTEREST = [
-  'Surname', 'Forename or Initial 1', 'Forename or Initial 2', 'Forename or Initial 3',
+  'Salutation', 'Surname', 'Forename or Initial 1', 'Forename or Initial 2', 'Forename or Initial 3',
   'National ID Number', 'Marital Status', 'Gender',
   'Physical Address Line 1', 'Physical Address Province', 'Physical Address District',
   'Physical Address Sector', 'Physical Address Cell', 'Country',
   'Work Telephone', 'Home Telephone', 'Mobile Telephone',
   'Account Number', 'Account Type', 'Account Status', 'Classification', 'Account Owner',
-  'Currency Type', 'Date Opened', 'Date Updated',
+  'Currency Type', 'Date Opened', 'Date Updated', 'Terms Duration', 'Repayment Term',
   'Opening Balance / Credit Limit', 'Current Balance', 'Current Balance Indicator',
   'Scheduled Monthly Payment Amount', 'Actual Payment Amount', 'Amount Past Due',
   'Installments in Arrears', 'Days in Arrears', 'Last Payment Date', 'Interest Rate',
-  'First Payment Date', 'Final Payment Date',
+  'First Payment Date', 'Sector of Activity', 'Final Payment Date',
 ]
 
 // Real Rwandan-convention full_name is "SURNAME Forename [Forename2]
@@ -69,6 +75,19 @@ function splitName(fullName: string): { surname: string; forenames: string[] } {
 function genderCode(g: string | null | undefined): string {
   if (g === 'male') return 'M'
   if (g === 'female') return 'F'
+  return ''
+}
+
+// Real archived data (7 preserved rows, confirmed 2026-08-17) shows
+// "Mr" for every male client and "Mrs" for every female client — no
+// "Miss"/"Ms" ever actually used despite `marital_status` existing as a
+// schema field, so this deliberately doesn't attempt a marital-status-
+// aware Miss/Mrs distinction (that field is null for all 21 real
+// current clients anyway — see docs/known-gaps.md). Confident, gender-
+// only derivation matching the real, observed convention exactly.
+function salutationCode(g: string | null | undefined): string {
+  if (g === 'male') return 'Mr'
+  if (g === 'female') return 'Mrs'
   return ''
 }
 
@@ -116,10 +135,18 @@ function toYyyymmdd(d: string | Date | null | undefined): string {
 }
 
 async function fetchMostRecentCrbFile(supabase: any): Promise<Buffer> {
+  // `submission_date` is a plain date column with no time component, so
+  // on any day this runs more than once (a real, observed case: a test
+  // run followed by a real click, both on 2026-08-17), two rows can tie
+  // on it — PostgREST doesn't guarantee which tied row comes back first.
+  // `uploaded_at` is a real timestamp already on this table; ordering by
+  // it as a tiebreaker makes "most recent" unambiguous regardless of how
+  // many times this runs on the same calendar day.
   const { data: reports, error } = await supabase
     .from('iacm_crb_filed_reports')
     .select('*')
     .order('submission_date', { ascending: false })
+    .order('uploaded_at', { ascending: false })
     .limit(1)
   if (error) throw new Error(error.message)
   const latest = (reports ?? [])[0]
@@ -230,6 +257,7 @@ function computeFieldValues(
   const scheduledPayment = Math.round(Number(loan.disbursed_amount ?? 0) * MONTHLY_INTEREST_RATE)
 
   const raw: Record<string, string | number | undefined> = {
+    'Salutation': salutationCode(client.gender) || undefined,
     'Surname': surname,
     'Forename or Initial 1': forenames[0],
     'Forename or Initial 2': forenames[1],
@@ -254,6 +282,20 @@ function computeFieldValues(
     'Classification': classifyByDays(days),
     'Date Opened': toYyyymmdd(loan.disbursement_date) || undefined,
     'Date Updated': toYyyymmdd(today),
+    // Real source, found 2026-08-17 pulling the live schema directly
+    // (absent from the tracked supabase.sql). Currently 1 for every real
+    // loan (unused in practice today, same situation as economic_sector
+    // below) — wired in anyway so it starts reflecting real values the
+    // moment loan officers set it per loan, with no further generator
+    // change needed.
+    'Terms Duration': loan.total_installments,
+    // BUL (bullet — principal due in full at maturity) vs MTH (monthly
+    // installments), derived from the same real total_installments
+    // field: exactly 1 installment means a single bullet payment: more
+    // than 1 means a real monthly repayment schedule. Kevin's confirmed
+    // rule, 2026-08-17 — not a guess like the earlier, abandoned attempt
+    // to infer this from repayment_frequency_days alone.
+    'Repayment Term': Number(loan.total_installments ?? 1) > 1 ? 'MTH' : 'BUL',
     'Opening Balance / Credit Limit': Number(loan.disbursed_amount ?? 0),
     'Current Balance': Number(loan.balance_outstanding ?? 0),
     'Current Balance Indicator': 'C',
@@ -265,6 +307,12 @@ function computeFieldValues(
     'Last Payment Date': toYyyymmdd(loan.last_payment_date) || undefined,
     'Interest Rate': Math.round(Number(loan.interest_rate ?? 0) * 12 * 10000) / 100,
     'First Payment Date': toYyyymmdd(loan.first_payment_date) || undefined,
+    // Real, semantically-correct source (iacm_loans.economic_sector) —
+    // confirmed 2026-08-17 to be null for every real loan today, so this
+    // is currently inert (produces no visible cell either way), but
+    // starts populating automatically the moment loan officers begin
+    // recording it, with no further generator change needed.
+    'Sector of Activity': loan.economic_sector || undefined,
     'Final Payment Date': toYyyymmdd(loan.maturity_date) || undefined,
   }
 
@@ -287,9 +335,14 @@ export interface CrbGenerateResult {
   filename: string
 }
 
-export async function generateCrbReport(): Promise<CrbGenerateResult> {
+// baseFileBufferOverride: test-only hook, not used by the live route —
+// lets verification re-run the real diff-and-patch logic against a
+// specific base file (e.g. the real pre-corruption archive) instead of
+// whatever is currently "most recent," without needing to touch/roll
+// back real archive state to test against an earlier point in time.
+export async function generateCrbReport(baseFileBufferOverride?: Buffer): Promise<CrbGenerateResult> {
   const supabase = createAdminClient()
-  const baseBuffer = await fetchMostRecentCrbFile(supabase)
+  const baseBuffer = baseFileBufferOverride ?? (await fetchMostRecentCrbFile(supabase))
 
   const loans = await fetchOutstandingLoans(supabase)
   const clients = loans.map((l: any) => l.iacm_clients).filter(Boolean)

@@ -952,3 +952,130 @@ consistent: 7+14=21 live, 10+7=17 original), all 6 non-Consumer sheets
 zero-diff, column widths intact. The generated file was automatically
 archived as the new base for next month's edit, confirmed via a fresh
 query of `iacm_crb_filed_reports`.
+
+**Full 74-column audit (2026-08-17) — `iacm_clients.marital_status` is
+null for every real client, an upstream data-entry gap, not a CRB
+generator defect.** Auditing every column against a real live scenario
+(14 added, 7 updated, 10 removed) found Marital Status showing correctly
+on the 7 preserved rows but blank on all 14 new ones — not because the
+generator has a bug, but because `client.marital_status` is confirmed
+`null` for all 21 real clients with an outstanding loan today, old and
+new alike. The 7 preserved rows only show a real value ("M") because
+that's the original archived file's historical data, inherited
+untouched — the diff logic never had a live value to compare it
+against, so it was never in a position to catch that the underlying
+field had never actually been captured. **Flag for Devotha:** capturing
+marital status at loan origination — a field that already exists on
+`iacm_clients`, just never gets filled in through the current intake
+process — would let this column start populating correctly for every
+client going forward, with no generator change needed.
+
+**Same audit found two real, previously-missed wiring opportunities,
+both now added to `HEADERS_OF_INTEREST`:**
+- **Salutation** — the 7 preserved rows show a clean, consistent real
+  convention: "Mr" for every male client, "Mrs" for every female one,
+  never "Miss"/"Ms" despite `marital_status` existing as a field. Since
+  `gender` (unlike `marital_status`) is actually populated for every
+  real client, this is now derived with confidence — gender alone, no
+  attempt at a marital-status-aware Miss/Mrs distinction, since that
+  data doesn't exist yet either (see above).
+- **Sector of Activity** — `iacm_loans.economic_sector` is a real schema
+  field that was never wired in, the same class of gap as Salutation.
+  Confirmed via live query it's currently null for every real loan too,
+  so wiring it in doesn't visibly change anything today — but it will
+  start populating automatically the first time a loan officer records
+  it, with zero further generator changes required.
+
+The remaining 71 blank/excluded columns were each individually confirmed
+during this audit to have either no real data source anywhere in the
+schema, or to be genuinely inapplicable by the product's own structure
+(e.g. Available Credit — not a revolving-credit product; Date Closed —
+excluded by construction, since the `balance_outstanding > 0` filter
+never includes a closed loan) — not further missed-wiring gaps.
+
+**Final live-schema pass (2026-08-17)** — pulled the real schema
+directly from PostgREST (the tracked `supabase.sql` turned out to be
+stale relative to the live database, missing real columns like
+`iacm_loans.total_installments`) and checked every other table for
+anything relevant. Two real, previously-missed sources found and wired
+in: `Terms Duration` ← `total_installments` (currently `1` for every
+real loan, same "wire it in anyway" treatment as Sector of Activity),
+and `Repayment Term` ← BUL if `total_installments = 1`, MTH if `> 1`
+(Kevin's confirmed rule — all 21 real current loans show BUL today,
+since none has more than 1 installment set yet). `profiles` (the
+self-service client-portal table) really does have `date_of_birth`,
+`marital_status`, `employment_status`, `employer_name` — but a live
+query matching all 21 real CRB clients by `national_id` found zero
+overlap; it's a structurally separate system with no real data for
+today's actual clients. `loan_applications` has the right columns for a
+real approval workflow but has zero rows in the whole database.
+Nationality, Occupation, Category, Nature, and Approval Date remain
+confirmed to have no source anywhere in any table.
+
+---
+
+## FUTURE (not built) — capture Nationality, Date of Birth, Occupation,
+## and Marital Status at loan origination, so CRB stops needing them left blank
+
+**Scoped 2026-08-17, intentionally not built tonight** — this is real
+future work, ready to pick up as its own task.
+
+**Correction worth noting first:** Marital Status is *not* actually
+missing from the intake form. `app/admin/iacm/loans/new/page.tsx`'s
+Client Identity step (step 1) already has a real dropdown for it
+(`married`/`single`/`widowed`/`divorced` — the exact 4 values
+`maritalCode()` in `lib/crb-report.ts` already expects), and
+`app/api/admin/iacm/loans/route.ts` already correctly saves it on both
+the insert and update paths (lines 28 and 39). The reason all 21 real
+current clients show `marital_status: null` isn't a missing field —
+these clients were entered through an older version of this flow, or a
+backfill, before this field existed. **No form change needed for
+Marital Status** — it will already populate correctly for any new
+client going forward. This is genuinely different from Nationality,
+Date of Birth, and Occupation, which have no form field and no schema
+column at all.
+
+**a. Which form(s):** `app/admin/iacm/loans/new/page.tsx` — specifically
+the "Client Identity" step (step 1), the same section that already
+collects Full Name/National ID/Phone/Gender/Age/Marital Status/
+District/Sector/Cell/Village. This is the one real place Devotha enters
+a new client's details, as part of recording a loan — not a separate
+admin screen, matching how she actually works.
+
+**b. Field types:**
+- **Date of Birth** — a real date picker (`<input type="date">`,
+  matching the pattern already used elsewhere for `disbursement_date`/
+  `maturity_date` in this same form's Loan Terms step), not free text.
+- **Occupation** — plain text input, same style as Sector/Cell/Village.
+  No fixed enumeration exists in any real CRB filing seen so far to
+  justify a dropdown.
+- **Nationality** — text input defaulting to `"Rwandan"` (INEMA's real
+  client base is confirmed overwhelmingly Rwandan, with rare real
+  exceptions already seen — e.g. Niwagaba James, Ugandan — so a
+  dropdown with "Rwandan" pre-selected plus free-text override, rather
+  than a hard-coded closed list, is the safer design for a real
+  exception).
+
+**c. Schema:** `marital_status` already exists on `iacm_clients`.
+`nationality`, `date_of_birth`, `occupation` would be three genuinely
+new columns:
+```sql
+alter table iacm_clients add column if not exists nationality text default 'Rwandan';
+alter table iacm_clients add column if not exists date_of_birth date;
+alter table iacm_clients add column if not exists occupation text;
+```
+(Needs Kevin to run directly — service-role/PostgREST can't execute DDL,
+the same established constraint as every other schema change this
+session.)
+
+**d. Feeds CRB automatically, no generator changes needed once this
+exists:** `lib/crb-report.ts`'s `HEADERS_OF_INTEREST` and
+`computeFieldValues()` already follow the exact pattern this would need
+— add `'Nationality': client.nationality`, `'Date of Birth':
+toYyyymmdd(client.date_of_birth)`, `'Occupation': client.occupation` to
+`computeFieldValues()`'s `raw` object and the three header strings to
+`HEADERS_OF_INTEREST`, the same two-line change already made three times
+tonight (Salutation, Sector of Activity, Terms Duration/Repayment Term).
+The moment Devotha starts entering real values through the form, they
+start appearing in CRB exports automatically — no separate backfill,
+no bulk admin task, just the same loan-recording flow she already uses.

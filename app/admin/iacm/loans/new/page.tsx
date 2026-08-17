@@ -35,6 +35,7 @@ export default function NewLoanEntry() {
     full_name: '', national_id: '', phone: '', gender: 'male',
     age: '', marital_status: 'married', district: 'Gasabo',
     sector: '', cell: '', village: '', previous_loans_paid: 'not_applicable',
+    nationality: 'Rwandan', date_of_birth: '', occupation: '',
   })
 
   const [loan, setLoan] = useState({
@@ -129,6 +130,18 @@ export default function NewLoanEntry() {
                 <option value="widowed">Widowed</option>
                 <option value="divorced">Divorced</option>
               </select>
+            </div>
+            <div>
+              <label className={labelCls}>Date of Birth</label>
+              <input type="date" className={inputCls} value={client.date_of_birth} onChange={e => setClient({...client, date_of_birth: e.target.value})} />
+            </div>
+            <div>
+              <label className={labelCls}>Occupation</label>
+              <input className={inputCls} value={client.occupation} onChange={e => setClient({...client, occupation: e.target.value})} placeholder="e.g. Shopkeeper" />
+            </div>
+            <div>
+              <label className={labelCls}>Nationality</label>
+              <input className={inputCls} value={client.nationality} onChange={e => setClient({...client, nationality: e.target.value})} placeholder="e.g. Rwandan" />
             </div>
             <div>
               <label className={labelCls}>District</label>
@@ -280,6 +293,8 @@ export default function NewLoanEntry() {
               {[
                 ['Name', client.full_name], ['National ID', client.national_id], ['Phone', client.phone],
                 ['Gender', client.gender], ['Age', client.age], ['Marital Status', client.marital_status],
+                ['Date of Birth', client.date_of_birth || '—'], ['Occupation', client.occupation || '—'],
+                ['Nationality', client.nationality || '—'],
                 ['Location', `${client.district}, ${client.sector}, ${client.cell}`],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between py-1.5 border-b border-slate-50 text-sm">

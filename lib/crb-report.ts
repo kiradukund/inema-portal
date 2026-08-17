@@ -33,20 +33,24 @@ const PROVINCE_BY_DISTRICT: Record<string, string> = {
 
 // The real header text this generator has a live data source for — the
 // only columns `readConsumerRoster`/`applyRowFieldUpdates` ever touch.
-// Every other real header (Nature, Category, Employer*, Occupation,
-// Income*, Nationality, etc.) is deliberately excluded, so a diff-based
-// update never clears or overwrites anything a human may have entered
-// there — see docs/known-gaps.md for the full blank-by-design list and
-// reasoning. Salutation and Sector of Activity added 2026-08-17 after a
-// full 74-column audit confirmed real sources exist for both — see the
+// Every other real header (Nature, Category, Employer*, Income*, etc.)
+// is deliberately excluded, so a diff-based update never clears or
+// overwrites anything a human may have entered there — see
+// docs/known-gaps.md for the full blank-by-design list and reasoning.
+// Salutation and Sector of Activity added 2026-08-17 after a full
+// 74-column audit confirmed real sources exist for both — see the
 // comments on `salutationCode()` and `economicSector` below. Terms
 // Duration and Repayment Term added 2026-08-17 after pulling the live
 // (not the stale tracked supabase.sql) schema found a real column,
 // iacm_loans.total_installments, that was missing from every earlier
 // pass — see the comments on those two fields in computeFieldValues().
+// Nationality, Date of Birth, and Occupation added 2026-08-17 once
+// iacm_clients.nationality/date_of_birth/occupation existed for real —
+// the New Loan form (app/admin/iacm/loans/new/page.tsx) now collects
+// all three directly from Devotha as part of recording a loan.
 const HEADERS_OF_INTEREST = [
   'Salutation', 'Surname', 'Forename or Initial 1', 'Forename or Initial 2', 'Forename or Initial 3',
-  'National ID Number', 'Marital Status', 'Gender',
+  'National ID Number', 'Nationality', 'Marital Status', 'Gender', 'Date of Birth', 'Occupation',
   'Physical Address Line 1', 'Physical Address Province', 'Physical Address District',
   'Physical Address Sector', 'Physical Address Cell', 'Country',
   'Work Telephone', 'Home Telephone', 'Mobile Telephone',
@@ -263,8 +267,11 @@ function computeFieldValues(
     'Forename or Initial 2': forenames[1],
     'Forename or Initial 3': forenames[2],
     'National ID Number': client.national_id,
+    'Nationality': client.nationality || undefined,
     'Marital Status': maritalCode(client.marital_status) || undefined,
     'Gender': genderCode(client.gender) || undefined,
+    'Date of Birth': toYyyymmdd(client.date_of_birth) || undefined,
+    'Occupation': client.occupation || undefined,
     'Physical Address Line 1': client.village || client.cell || undefined,
     'Physical Address Province': PROVINCE_BY_DISTRICT[(client.district ?? '').toLowerCase()],
     'Physical Address District': client.district ? String(client.district).toUpperCase() : undefined,

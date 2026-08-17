@@ -28,6 +28,8 @@ export async function POST(req: NextRequest) {
         age: Number(client.age) || null, marital_status: client.marital_status,
         district: client.district, sector: client.sector, cell: client.cell,
         village: client.village, previous_loans_paid: client.previous_loans_paid,
+        nationality: client.nationality || null, date_of_birth: client.date_of_birth || null,
+        occupation: client.occupation || null,
         updated_at: new Date().toISOString(),
       }).eq('id', clientId)
     } else {
@@ -40,6 +42,8 @@ export async function POST(req: NextRequest) {
           district: client.district, sector: client.sector,
           cell: client.cell, village: client.village,
           previous_loans_paid: client.previous_loans_paid,
+          nationality: client.nationality || null, date_of_birth: client.date_of_birth || null,
+          occupation: client.occupation || null,
         }).select().single()
       if (clientErr) return serverError(clientErr)
       clientId = newClient.id

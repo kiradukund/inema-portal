@@ -687,3 +687,135 @@ lost before any write even happened, on every sheet including the 6
 untouched stubs). Row height write support for legacy BIFF8 output
 specifically isn't there in this library. Impact is minor — 2 rows, close
 to Excel's default height regardless.
+
+**Default font is Arial 12, not the original's real Calibri 11 —
+attempted a fix, reverted it, staying on Arial by deliberate decision.**
+Confirmed via direct inspection with `xlrd` that the real archived
+file's true workbook default (font index 0, used by the header and
+nearly every data cell) is Calibri 11 — "Arial 12" is purely this
+library's own hardcoded fallback (`write_FONTS_biff8` in
+`node_modules/xlsx/xlsx.js` writes a single literal `{sz:12,
+name:"Arial"}` FONT record with no option to parameterize it, confirmed
+by reading the library source directly).
+
+Patched it via `patch-package` (2-line change, `sz:12→11`,
+`name:"Arial"→"Calibri"`) on 2026-08-16. Kevin reported a Protected View
+security warning on the resulting file that hadn't appeared before the
+patch. Investigated: since "Calibri" is 2 characters longer than
+"Arial", the FONT record's byte length changes, which cascades through
+every subsequent offset in the legacy BIFF8/OLE-compound-file stream — a
+before/after no-op diff (same input, only the font patch differing)
+showed 29,590 of 53,248 bytes differing. The write process itself is
+fully deterministic (two consecutive runs of identical code produced
+byte-identical output, ruling out timestamp noise as the explanation),
+so this cascade is real and entirely attributable to the font-name
+length change. The resulting file still parsed cleanly and completely
+under `xlrd` (an independent reader) with no errors, and had no
+Zone.Identifier/Mark-of-the-Web stream — but neither of those is the
+same test as opening it in real Excel, and this codebase already has one
+precedent (the original BNR template work, `lib/bnr-report.ts`'s header
+comment) of an automated round-trip passing while real Excel still
+complained. Given Kevin's explicit standard — a security warning on a
+real regulatory file is not acceptable under any circumstance — and
+given I have no way to independently verify "safe" to that standard,
+**the patch was reverted**: `patches/xlsx+0.18.5.patch` deleted, the
+`patch-package` dependency and `postinstall` hook removed, `xlsx`
+reinstalled clean. The generator produces Arial 12 again, matching what
+was already confirmed safe (no warning reported) before the patch.
+Calibri 11 remains a real, understood, but unresolved cosmetic gap —
+not silently dropped.
+
+**Full decorative-formatting gap (fonts, fills, borders, row heights) —
+exhaustively scoped 2026-08-17, shipping as a known limitation, real
+byte-level fix deliberately deferred to dedicated future work.**
+
+An exhaustive, all-7-sheets check using `xlrd` (which reads real BIFF8
+font/format records directly — more complete than `xlsx`'s own
+`cellStyles` reading, which was checked earlier and materially
+undercounted this) found the gap is much bigger than "a couple of cells":
+the real archived file defines **35 fonts** (Consumer's own *data* rows,
+not just the header, use 4 different ones — Calibri automatic, Bookman
+Old Style, Arial), **311 distinct cell-format (XF) combinations**, a
+full border under the header row on **every one of the 7 sheets**, and a
+63-cell accent fill block on the Corporate sheet's data-entry row that
+an earlier, Consumer-only check had missed entirely. Every row (not just
+2, as first found) has an explicit height. The generator currently
+preserves data values, all 74 columns, all 6 stub sheets' content, and
+~256 of 257 column widths — everything else in this list is lost, because
+`xlsx` (SheetJS community edition) doesn't have working style read/write
+support for legacy BIFF8, which isn't a configurable gap (see the font
+finding above: even the one style property reachable via source-patching
+caused a real security warning once touched).
+
+**Root cause, precisely:** the generator's whole architecture reads the
+base file into an in-memory object model, clears/rewrites the Consumer
+sheet's data, and re-serializes the *entire* workbook from that model.
+Style information that the reader never captured has nothing to write
+back out — no write-side option can recover it, because it isn't there
+to recover.
+
+**The only real fix identified: a byte-level BIFF8 patcher** that edits
+the original archived file's raw bytes directly — never going through
+the lossy read/rewrite pipeline — touching only the specific bytes for
+cells whose value actually changed, leaving every font/fill/border/row-
+height byte untouched. Scoped in detail 2026-08-17, not built. Starting
+point for whoever picks this up:
+
+- **First, cheap thing to verify (a real open question, not assumed):**
+  whether the Consumer sheet's text cells are stored as `LABELSST`
+  records (a 4-byte index into a shared string table — standard for
+  real Excel-authored files with repeated text) or inline `LABEL`
+  records. This was never confirmed via a raw hex dump, only inferred
+  from how `xlsx`/`xlrd` present the parsed values. It determines
+  whether "changing a value" means swapping a 4-byte index (if the new
+  string already exists in the table — rare in practice, since new
+  balances/dates are new strings almost every time) or always growing
+  the shared-string table.
+- **This isn't a rare-edge-case patcher — it needs real resize
+  capability on nearly every run.** The loan book grows most months (17
+  real rows in the Aug-2026 archive vs. 21 live outstanding loans the
+  same week this was scoped), so new client rows — not just changed
+  values — are the common case, and inserting them means growing the
+  sheet's row/cell record area, not just substituting bytes in place.
+- **The OLE-container mechanics** (the file is a compound file: fixed-
+  size sectors, a FAT sector-chain per stream, a directory listing every
+  stream) need correct handling whenever the Workbook stream's total
+  length changes: extending the FAT chain, finding or allocating free
+  sectors, updating the directory entry's declared length, and — the
+  sharp, easy-to-miss detail — recomputing the absolute byte offset
+  (`BOUNDSHEET.lbPlyPos`) that every one of the 7 sheets stores pointing
+  to its own data, since growing anything before a given sheet in stream
+  order (the SST lives in the workbook "globals" section, before every
+  sheet) shifts where every later sheet actually starts.
+- **A real lead worth checking before hand-rolling the OLE layer**:
+  SheetJS publishes `cfb` as a separate package for exactly this
+  container-level read/write, and `xlsx` likely already uses it
+  internally — plausibly why today's generator can already shrink/grow
+  the file without corrupting the container, even though it can't
+  preserve styles. If `cfb` is reusable directly, the real remaining
+  work narrows to the BIFF8 record-level logic (reading and re-emitting
+  FONT/XF/fill/border tables and per-cell XF assignments) rather than
+  also reimplementing compound-file mechanics from zero. Not confirmed
+  — the first real step of the dedicated effort, not an assumption to
+  build on.
+- **Staged testing matrix**, each stage checked in real Excel before
+  moving to the next, given the font-patch precedent above of an
+  automated pass not catching a real Excel-only problem: zero-change
+  no-op patch; small in-place-only patch (values already present in the
+  SST); a patch requiring real SST growth; a patch adding new rows; a
+  patch removing rows (repaid clients); and feeding the patcher's own
+  output back in as the next month's base, since that's the real usage
+  pattern. Every output should self-validate (re-parse with `xlrd`, walk
+  the raw FAT chain, confirm every untouched cell's XF/font index is
+  unchanged) and refuse to return a file if anything's inconsistent,
+  rather than ever hand over a silently-corrupt regulatory document.
+
+**Decision (Kevin, 2026-08-17):** ship the current generator as-is. Data
+values, account numbers, arrears/classification, all 74 columns, and all
+6 stub sheets are correct and independently verified against live data.
+The decorative-formatting gap above is real and understood, not a hidden
+risk — explicitly not worth blocking the feature on, and explicitly not
+worth attempting as a rushed tonight-fix given the demonstrated fragility
+of this file format. The byte-level patcher is scoped and ready to pick
+up as dedicated future work, starting with the SST verification spike
+above.

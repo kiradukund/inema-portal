@@ -64,11 +64,18 @@ export default function CRBReportPage() {
         setLoading(false); return
       }
       const loanCount = res.headers.get('x-loan-count') ?? '?'
+      // Read the real filename off Content-Disposition instead of
+      // constructing one here — the server (lib/crb-report.ts) is the
+      // single source of truth for the CRBTTYYYYMMDDVVV.BBB.xls pattern,
+      // so this can't silently drift out of sync with it.
+      const disposition = res.headers.get('content-disposition') ?? ''
+      const nameMatch = /filename="([^"]+)"/.exec(disposition)
+      const filename = nameMatch ? nameMatch[1] : 'CRB_Report.xls'
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `INEMA_CRB_Report_${new Date().toISOString().slice(0, 7)}.xls`
+      a.download = filename
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)

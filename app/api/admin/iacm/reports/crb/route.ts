@@ -12,12 +12,11 @@ export async function POST() {
     if (!auth.ok) return auth.response
 
     const result = await generateCrbReport()
-    const filename = `INEMA_CRB_Report_${result.reportingMonth}.xls`
     return new NextResponse(Buffer.from(result.buffer), {
       status: 200,
       headers: {
         'Content-Type': 'application/vnd.ms-excel',
-        'Content-Disposition': `attachment; filename="${filename}"`,
+        'Content-Disposition': `attachment; filename="${result.filename}"`,
         'X-Loan-Count': String(result.loanCount),
       },
     })

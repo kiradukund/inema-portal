@@ -283,6 +283,7 @@ export interface CrbGenerateResult {
   loanCount: number
   reportingMonth: string // YYYY-MM
   submissionDate: string // YYYY-MM-DD
+  filename: string
 }
 
 export async function generateCrbReport(baseFileBuffer?: Buffer): Promise<CrbGenerateResult> {
@@ -419,12 +420,22 @@ export async function generateCrbReport(baseFileBuffer?: Buffer): Promise<CrbGen
   // (2 rows in the real archived file had a non-default height), not
   // something these options can close. See docs/known-gaps.md.
   const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'biff8', cellStyles: true }) as Buffer
-  const now = new Date()
-  const reportingMonth = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`
+  const reportingMonth = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, '0')}`
+  const submissionDate = today.toISOString().split('T')[0]
+  // CRBTTYYYYMMDDVVV.BBB.xls — Kevin's confirmed spec. VVV is the daily
+  // sequence number; hardcoded to "001" since there's no real rule yet
+  // for what a same-day second generation should use (no real historical
+  // file shows more than one filing per day to confirm a pattern against)
+  // — a second report generated on the same date will overwrite the same
+  // filename. Flagged as a decision Kevin can revisit, not silently
+  // assumed. BBB=730 is fixed, matching both real archived filings'
+  // ".730" suffix.
+  const filename = `CRBTT${submissionDate.replace(/-/g, '')}001.730.xls`
   return {
     buffer,
     loanCount: loans.length,
     reportingMonth,
-    submissionDate: now.toISOString().split('T')[0],
+    submissionDate,
+    filename,
   }
 }

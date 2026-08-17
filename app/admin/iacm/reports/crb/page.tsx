@@ -64,6 +64,9 @@ export default function CRBReportPage() {
         setLoading(false); return
       }
       const loanCount = res.headers.get('x-loan-count') ?? '?'
+      const addedCount = res.headers.get('x-added-count') ?? '0'
+      const updatedCount = res.headers.get('x-updated-count') ?? '0'
+      const removedCount = res.headers.get('x-removed-count') ?? '0'
       // Read the real filename off Content-Disposition instead of
       // constructing one here — the server (lib/crb-report.ts) is the
       // single source of truth for the CRBTTYYYYMMDDVVV.BBB.xls pattern,
@@ -80,7 +83,7 @@ export default function CRBReportPage() {
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
-      setSuccess(`✓ Updated — ${loanCount} currently-outstanding loan(s) written into the real Consumer sheet structure. Review before submitting.`)
+      setSuccess(`✓ Edited last month's real file directly — ${addedCount} new client(s) added, ${updatedCount} updated, ${removedCount} fully-repaid client(s) removed, out of ${loanCount} currently outstanding. This exact file is now saved as next month's starting point. Review before submitting.`)
     } catch (e) { setError('Failed to update. Try again.') }
     setLoading(false)
   }
@@ -89,7 +92,7 @@ export default function CRBReportPage() {
     <div className="p-8 max-w-2xl">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-slate-800">CRB Monthly Report</h1>
-        <p className="text-slate-500 text-sm mt-1">Fill the real Credit Reference Bureau file with this month&apos;s client data — not a new document, the same real .xls structure, refilled.</p>
+        <p className="text-slate-500 text-sm mt-1">Directly edits last month&apos;s real filed .xls, byte for byte — not a new document, not a regeneration. Only the specific cells whose data actually changed are touched; every font, fill, border, and column width survives untouched.</p>
       </div>
 
       {error && <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">{error}</div>}
@@ -99,10 +102,12 @@ export default function CRBReportPage() {
         <div className="bg-slate-50 rounded-lg p-4">
           <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">What this does</p>
           <ul className="text-xs text-slate-600 space-y-1.5">
-            <li>• Loads the most recently archived real CRB .xls as its structure — 74-column Consumer sheet plus the 6 other real sheets (Corporate, Shareholders, Directors, Collateral, Guarantors, Bounced Cheques), left byte-identical.</li>
-            <li>• Clears the Consumer sheet&apos;s data rows and refills them with every client whose loan currently has a balance outstanding — a fresh snapshot, not a running total. Clients who&apos;ve fully repaid drop off automatically.</li>
+            <li>• Loads the most recently generated real CRB .xls — not always the original template, the actual file from last time this ran — and computes the real difference against every client whose loan currently has a balance outstanding.</li>
+            <li>• New clients: a new row is added, styled to match the existing rows. Fully-repaid clients: their row is removed entirely and every row below shifts up, exactly like Excel&apos;s own Delete Row. Existing clients: only the specific cells whose value actually changed (balance, arrears, classification, etc.) are touched — anything unchanged, including anything filled in by hand, is left completely alone.</li>
+            <li>• The 6 other real sheets (Corporate, Shareholders, Directors, Collateral, Guarantors, Bounced Cheques) are never touched.</li>
             <li>• Assigns a permanent Account Number (IFS####) the first time a client is ever included.</li>
             <li>• Computes real Days in Arrears / Amount Past Due / Classification from each loan&apos;s maturity date and balance — not defaulted to Normal/0.</li>
+            <li>• This exact generated file is automatically saved as the starting point for next month&apos;s edit — &quot;editing forward,&quot; not restarting from the original template each time.</li>
           </ul>
         </div>
 
@@ -114,10 +119,10 @@ export default function CRBReportPage() {
         <button onClick={updateThisMonth} disabled={loading}
           className="w-full bg-green-700 text-white py-3.5 rounded-xl font-bold hover:bg-green-800 disabled:opacity-60 text-sm flex items-center justify-center gap-2">
           {loading
-            ? <><span className="animate-spin inline-block">⟳</span> Updating...</>
+            ? <><span className="animate-spin inline-block">⟳</span> Editing...</>
             : <><span>📝</span> Update This Month&apos;s CRB Report</>}
         </button>
-        <p className="text-xs text-slate-400 text-center -mt-3">Downloads as .xls. Review it, then archive the copy you actually submit via the Filed Reports process.</p>
+        <p className="text-xs text-slate-400 text-center -mt-3">Downloads as .xls and is saved automatically as next month&apos;s starting file. Review it before submitting.</p>
       </div>
 
       <FiledReports />

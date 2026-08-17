@@ -18,6 +18,9 @@ export async function POST() {
         'Content-Type': 'application/vnd.ms-excel',
         'Content-Disposition': `attachment; filename="${result.filename}"`,
         'X-Loan-Count': String(result.loanCount),
+        'X-Added-Count': String(result.addedCount),
+        'X-Updated-Count': String(result.updatedCount),
+        'X-Removed-Count': String(result.removedCount),
       },
     })
   } catch (e: any) {

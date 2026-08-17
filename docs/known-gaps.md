@@ -819,3 +819,136 @@ worth attempting as a rushed tonight-fix given the demonstrated fragility
 of this file format. The byte-level patcher is scoped and ready to pick
 up as dedicated future work, starting with the SST verification spike
 above.
+
+**Update, same day: the byte-level BIFF8 patcher was actually built and
+staged-tested (`lib/crb-biff8-patcher.ts`), not just scoped.** Each stage
+below was verified two ways before moving to the next: the patcher's own
+internal self-check (refuses to write a file at all if anything
+unexpected changed) and an independent re-check with `xlrd`, plus a real
+Excel open-and-check by Kevin at every stage.
+
+- **Stage 0** — `cfb` (already a real `xlsx` dependency, not something
+  added) round-trips the OLE container correctly: confirmed real Excel
+  opens a parse→write round trip with zero BIFF8 involvement cleanly.
+- **Stage 1** — the Workbook stream's 2,361 real BIFF8 records parse and
+  reserialize byte-identical with zero changes.
+- **Stage 2** — an in-place value change (Gender M→F, reusing an
+  existing SST index) touches exactly 1 of 2,361 records, only its
+  4-byte `sstIndex` field.
+- **Stage 3** — SST growth: a genuinely new value requires appending a
+  new SST entry, bumping `cstUnique` (not `cstTotal` — same number of
+  text cells overall, one now points elsewhere), and recomputing all 7
+  `BOUNDSHEET.lbPlyPos` offsets, since the SST lives in the workbook
+  "globals" section that precedes every sheet.
+- **Stage 4** — inserting a brand-new client row: new `ROW` + `LABELSST`
+  records, each new cell's XF copied directly from the same column on
+  the real last row (not inferred). Consumer's `INDEX`/`DBCELL` records
+  (row-lookup performance accelerators — MS-XLS documents these as
+  optional, not required data) are deleted rather than recomputed,
+  since correctly rebuilding `DBCELL`'s relative-offset encoding wasn't
+  verified byte-for-byte and leaving them stale seemed riskier than
+  removing them — confirmed safe by the real Excel check.
+- **Stage 5** — removing an existing row entirely: every later row
+  renumbers down by one (a true "close the gap" deletion matching
+  Excel's own Delete Row, not a blank row left behind).
+
+**Orphaned SST entries from row removal — confirmed real, decided
+permanent, not worth compacting.** Deleting a row's cells doesn't remove
+the shared-string entries those cells referenced if nothing else in the
+workbook uses them — e.g. removing one real client left 13 of his 46
+field values (name, national ID, address, phone, account number — the
+identity fields; the ~33 shared/coded values like currency and status
+codes stay referenced by other rows) sitting unused in the SST. The
+patcher deliberately does not compact/renumber the table to reclaim
+these — doing so safely would mean scanning and renumbering every
+`LABELSST` reference across all 7 sheets, a meaningfully bigger
+operation than "remove one row." **Kevin's decision (2026-08-17):**
+accepted as permanent, low-stakes bloat (a name and an ID number sitting
+unused costs a few dozen bytes) — not a correctness risk, not worth a
+dedicated compaction stage. If this ever needs revisiting, the trigger
+would be file-size growth becoming actually noticeable after many real
+months of edits, not a theoretical concern today.
+
+**A real bug in `cfb` usage, found by the repeat-use test — not a bug in
+this patcher's BIFF8 logic.** Every stage above worked correctly in
+isolation (parse the real archived file fresh, mutate, write), but
+chaining stages — feeding one stage's own output back in as the next
+edit's starting file, exactly how this gets used in real monthly
+practice — broke Stage 4 on its second use. Root cause, confirmed by
+direct testing: mutating a `CFB.parse()`'d container's stream content in
+place and calling `CFB.write()` on that same container object silently
+truncates back to the pre-mutation length, but only on a container that
+itself came from parsing a *previous* `CFB.write()` output — a single
+generation never showed this. Fixed by building a genuinely fresh
+container via `CFB.utils.cfb_new()`/`cfb_add()` (copying every other
+stream through unchanged) instead of mutating the parsed one — verified
+this has no such problem, then re-verified all 5 stages individually
+plus a real 4-round chained test (remove → value-change → insert →
+remove, each parsing the previous round's actual output bytes) end to
+end. This is exactly the failure category the staged testing plan's
+"feed the patcher's own output back in" step existed to catch, and it
+did.
+
+**Update, wiring the patcher into the live feature (2026-08-17): a
+second real bug found, this time in the BIFF8 logic itself, before any
+live data touched it.** Building the production diff-based update
+(`readConsumerRoster`/`applyRowFieldUpdates`/`applyRowInsertion` in
+`lib/crb-biff8-patcher.ts`) against real archived data surfaced that
+**not every populated cell in the Consumer sheet is `LABELSST`/text** —
+an earlier spot-check (Current Balance, Date Opened) had generalized to
+"every cell is text," which turned out to be incomplete. A full scan
+found `Classification` is a real RK-encoded number for rows 1-4, and
+Opening/Current Balance are packed into a single `MULRK` record for row
+2 — every other row/column really is `LABELSST`. Confirmed by hex
+decode: `rkraw=1072693248` decodes to `1.0`, matching the real
+Classification value.
+
+The first version of the diff logic only scanned for `LABELSST`, so it
+treated these real existing values as "not present" — which would have
+inserted a second, conflicting cell record at the same row/column
+instead of updating the one already there, on the very first live run
+(rows 1-4 are real, currently-outstanding clients). Caught in local
+testing against the real archived file before any live data ran through
+it. Fixed with a proper RK decoder (standard packed-number algorithm:
+low 2 bits are flags, either a 30-bit signed int or the high 32 bits of
+an IEEE754 double) and MULRK-splitting logic (a touched MULRK group
+becomes individual per-column records — `LABELSST` for the column(s)
+actually changing, `RK` preserved exactly for the rest) — verified
+independently with `xlrd` on both the single-RK-column case
+(Classification) and the multi-column-in-one-MULRK-group case (Opening
++ Current Balance changed simultaneously). Once a cell is touched this
+way it becomes text going forward, matching the file's dominant
+convention and every other cell this generator writes — a deliberate
+normalization, not an inconsistency.
+
+**Two more real bugs, both caught by the generator's own self-check on
+the actual first live run against real data (21 outstanding loans, 17
+real archived clients) — refused to write a file both times, exactly as
+designed:**
+
+1. The self-check's own post-patch verification scanner was still
+   LABELSST-only (an oversight — the real update logic had already been
+   fixed for RK/MULRK, the check verifying it hadn't). A column
+   deliberately left untouched because its value already matched (still
+   a preserved `RK` cell inside a split `MULRK` group) read back as
+   "missing" to the LABELSST-only checker, which then failed a patch
+   that was actually correct. Fixed by having the self-check use the
+   same RK/MULRK-aware row scanner as the real logic.
+2. Inserting a genuinely new client whose data happened to populate
+   "Forename or Initial 3" — a column no other real row in the file has
+   ever used — had no row to copy an XF (style) from, and the insertion
+   logic threw rather than guess. Fixed with an evidence-based fallback:
+   when a column has no real example anywhere, use the most common XF
+   value across every other real data cell in the sheet (a genuine
+   "typical style for this sheet," derived from what's actually there,
+   not an invented default) instead of blocking the insert.
+
+Neither was hypothetical — both were hit on the very first real run,
+not synthetic test data. Re-ran clean afterward: 21/21 live loans present
+with correct values (5 spot-checked by hand against `iacm_loans`/
+`iacm_clients` directly — exact match on balance, days in arrears,
+account number), 14 added / 7 updated / 10 removed (arithmetically
+consistent: 7+14=21 live, 10+7=17 original), all 6 non-Consumer sheets
+zero-diff, column widths intact. The generated file was automatically
+archived as the new base for next month's edit, confirmed via a fresh
+query of `iacm_crb_filed_reports`.

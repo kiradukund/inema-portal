@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
+import { MONTHLY_INTEREST_RATE, UPFRONT_FEE_RATE, VAT_RATE, monthsElapsed } from '@/lib/calculator'
 
 function PaymentForm() {
   const router = useRouter()
@@ -9,11 +10,13 @@ function PaymentForm() {
   const preselectedLoan = searchParams.get('loan')
 
   const [loans, setLoans] = useState<any[]>([])
+  const [priorPayments, setPriorPayments] = useState<any[]>([])
   const [selectedLoan, setSelectedLoan] = useState(preselectedLoan ?? '')
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(new Date().toISOString().split('T')[0])
   const [method, setMethod] = useState('mobile_money')
   const [notes, setNotes] = useState('')
+  const [monthsOverride, setMonthsOverride] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [preview, setPreview] = useState<any>(null)
@@ -24,19 +27,43 @@ function PaymentForm() {
     })
   }, [])
 
+  // Real payment history for the selected loan — the same source the
+  // backend now uses to figure out how many months of interest are owed
+  // (never the loan's own last_payment_date field, see the API route's
+  // comment on why). Refetched whenever the loan changes.
   useEffect(() => {
-    if (selectedLoan && amount && Number(amount) > 0) {
+    if (!selectedLoan) { setPriorPayments([]); return }
+    fetch(`/api/admin/iacm/payments?loan_id=${selectedLoan}`).then(r => r.json()).then(d => {
+      if (d.success) setPriorPayments(d.data)
+    })
+  }, [selectedLoan])
+
+  useEffect(() => {
+    if (selectedLoan && amount && Number(amount) > 0 && date) {
       const loan = loans.find(l => l.id === selectedLoan)
       if (loan) {
         const outstanding = Number(loan.balance_outstanding)
-        const interest = Number(loan.disbursed_amount) * 0.05
-        const paid = Number(amount)
-        const interestPortion = Math.min(paid, interest)
-        const principalPortion = Math.max(0, paid - interestPortion)
-        setPreview({ outstanding, interest, interestPortion, principalPortion, newBalance: Math.max(0, outstanding - principalPortion) })
+        const disbursed = Number(loan.disbursed_amount)
+        const lastActivityDate = priorPayments.length > 0 ? new Date(priorPayments[0].payment_date) : new Date(loan.disbursement_date)
+        const months = Number(monthsOverride) > 0 ? Number(monthsOverride) : monthsElapsed(lastActivityDate, new Date(date))
+        const interestOwed = disbursed * MONTHLY_INTEREST_RATE * months
+        const feeAndVatOwed = disbursed * UPFRONT_FEE_RATE * (1 + VAT_RATE)
+        const maxOwed = outstanding + interestOwed + feeAndVatOwed
+        const paid = Math.min(Number(amount), maxOwed)
+        const interestPortion = Math.min(paid, interestOwed)
+        const remainderAfterInterest = paid - interestPortion
+        const isPayoff = outstanding - remainderAfterInterest <= 0
+        const feePortion = isPayoff ? Math.min(remainderAfterInterest, feeAndVatOwed) : 0
+        const principalPortion = Math.min(outstanding, Math.max(0, remainderAfterInterest - feePortion))
+        const overpaidAndCapped = Number(amount) > maxOwed
+        setPreview({
+          outstanding, months, lastActivityDate: lastActivityDate.toISOString().split('T')[0],
+          interestOwed, interestPortion, principalPortion, feePortion, paid, overpaidAndCapped,
+          newBalance: Math.max(0, outstanding - principalPortion),
+        })
       }
     } else setPreview(null)
-  }, [selectedLoan, amount, loans])
+  }, [selectedLoan, amount, date, monthsOverride, loans, priorPayments])
 
   async function submit() {
     if (!selectedLoan || !amount || !date) { setError('Please fill all required fields'); return }
@@ -44,7 +71,10 @@ function PaymentForm() {
     const res = await fetch('/api/admin/iacm/payments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ loan_id: selectedLoan, total_amount: Number(amount), payment_date: date, payment_method: method, notes }),
+      body: JSON.stringify({
+        loan_id: selectedLoan, total_amount: Number(amount), payment_date: date, payment_method: method, notes,
+        ...(Number(monthsOverride) > 0 ? { interest_months: Number(monthsOverride) } : {}),
+      }),
     })
     const data = await res.json()
     setLoading(false)
@@ -90,21 +120,38 @@ function PaymentForm() {
           <input type="number" className={inputCls} value={amount} onChange={e => setAmount(e.target.value)} placeholder="e.g. 50000" />
         </div>
 
-        {preview && (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-sm">
-            <p className="font-bold text-green-800 mb-2">Payment Breakdown (auto-calculated)</p>
-            <div className="space-y-1">
-              <div className="flex justify-between"><span className="text-slate-600">Interest portion</span><span className="font-semibold">RWF {preview.interestPortion.toLocaleString()}</span></div>
-              <div className="flex justify-between"><span className="text-slate-600">Principal portion</span><span className="font-semibold">RWF {preview.principalPortion.toLocaleString()}</span></div>
-              <div className="flex justify-between border-t border-green-200 pt-1 mt-1"><span className="font-semibold text-green-800">New outstanding balance</span><span className="font-bold text-green-800">RWF {preview.newBalance.toLocaleString()}</span></div>
-            </div>
-          </div>
-        )}
-
         <div>
           <label className="block text-xs font-semibold text-slate-600 mb-1">Payment Date *</label>
           <input type="date" className={inputCls} value={date} onChange={e => setDate(e.target.value)} />
         </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-600 mb-1">Months of Interest to Charge (optional)</label>
+          <input type="number" min="1" className={inputCls} value={monthsOverride} onChange={e => setMonthsOverride(e.target.value)}
+            placeholder={preview ? `Leave blank to auto-calculate (${preview.months} month${preview.months === 1 ? '' : 's'})` : 'Leave blank to auto-calculate'} />
+          <p className="text-xs text-slate-400 mt-1">Auto-calculated from this loan&apos;s real payment history since {preview?.lastActivityDate ?? 'disbursement'}. Override this if you know a real multi-month catch-up is owed and the system undercounts it.</p>
+        </div>
+
+        {preview && (
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-sm">
+            <p className="font-bold text-green-800 mb-2">Payment Breakdown (auto-calculated)</p>
+            <div className="space-y-1">
+              <div className="flex justify-between"><span className="text-slate-600">Months of interest charged</span><span className="font-semibold">{preview.months} month{preview.months === 1 ? '' : 's'} (since {preview.lastActivityDate})</span></div>
+              <div className="flex justify-between"><span className="text-slate-600">Interest owed for that period</span><span className="font-semibold">RWF {preview.interestOwed.toLocaleString()}</span></div>
+              <div className="flex justify-between"><span className="text-slate-600">Interest portion</span><span className="font-semibold">RWF {preview.interestPortion.toLocaleString()}</span></div>
+              {preview.feePortion > 0 && (
+                <div className="flex justify-between"><span className="text-slate-600">Fee/VAT clearing (payoff)</span><span className="font-semibold">RWF {preview.feePortion.toLocaleString()}</span></div>
+              )}
+              <div className="flex justify-between"><span className="text-slate-600">Principal portion</span><span className="font-semibold">RWF {preview.principalPortion.toLocaleString()}</span></div>
+              <div className="flex justify-between border-t border-green-200 pt-1 mt-1"><span className="font-semibold text-green-800">New outstanding balance</span><span className="font-bold text-green-800">RWF {preview.newBalance.toLocaleString()}</span></div>
+            </div>
+            {preview.overpaidAndCapped && (
+              <p className="mt-2 text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 text-xs">
+                ⚠ The amount entered exceeds what&apos;s owed under this calculation (RWF {preview.paid.toLocaleString()} will actually be recorded, not the full amount). If you believe more months of interest are genuinely owed, set &quot;Months of Interest to Charge&quot; above instead of relying on auto-calculation.
+              </p>
+            )}
+          </div>
+        )}
 
         <div>
           <label className="block text-xs font-semibold text-slate-600 mb-1">Payment Method</label>

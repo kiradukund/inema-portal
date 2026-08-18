@@ -11,6 +11,22 @@ export const UPFRONT_FEE_RATE = 0.04             // 4% total (1% application + 1
 export const VAT_RATE = 0.18                     // 18% VAT applied on the 4% upfront fee ONLY
 export const LATE_PAYMENT_RATE = 0.05            // 5% per month on overdue
 
+// Full calendar months between two dates, floored (e.g. 22-Jan to 23-Mar =
+// 2, 09-Mar to 02-Jun = 2 -- day-of-month precision, not a rough diff).
+// Shared by the Record Payment route (lib/ledger's caller in
+// app/api/admin/iacm/payments/route.ts) and its live preview in
+// app/admin/iacm/payments/new/page.tsx, so the number shown before
+// submission always matches what actually gets posted -- previously these
+// drifted (the preview assumed a flat 1 month, the backend computed real
+// elapsed months), which is how a real 6-month catch-up payment for
+// HABINEZA Jean Marie got silently truncated to 1 month of interest with no
+// warning on screen. See docs/known-gaps.md for the full incident.
+export function monthsElapsed(from: Date, to: Date): number {
+  let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
+  if (to.getDate() < from.getDate()) months -= 1
+  return Math.max(1, months)
+}
+
 export const LOAN_LIMITS: Record<LoanType, { min: number; max: number; maxMonths: number }> = {
   salary_advance: { min: 50_000,  max: 2_000_000,  maxMonths: 6 },
   quinzaine:      { min: 50_000,  max: 1_000_000,  maxMonths: 1 },   // 15 days = 1 month billing

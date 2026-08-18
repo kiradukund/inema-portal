@@ -3,22 +3,7 @@ import { createAdminClient } from '@/lib/supabase'
 import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 import { postJournalEntry, type JournalLineInput } from '@/lib/ledger'
-import { MONTHLY_INTEREST_RATE, UPFRONT_FEE_RATE, VAT_RATE } from '@/lib/calculator'
-
-// Full calendar months between two dates, floored (e.g. 22-Jan to 23-Mar =
-// 2, 09-Mar to 02-Jun = 2 -- day-of-month precision, not a rough diff).
-// Confirmed against 3 real historical catch-up repayments (BIZIMANA Andre,
-// ARMAND, STELLA) -- matches cleanly for loans with a clean payment
-// history. Real bookkeeping sometimes charges more months than a pure
-// date formula implies (irregular history, informal earlier payments not
-// in the system) -- interest_months in the request body overrides this
-// when the admin knows better, same judgment call Devotha's own
-// "Interest Calculations" sheet documents by hand for each case.
-function monthsElapsed(from: Date, to: Date): number {
-  let months = (to.getFullYear() - from.getFullYear()) * 12 + (to.getMonth() - from.getMonth())
-  if (to.getDate() < from.getDate()) months -= 1
-  return Math.max(1, months)
-}
+import { MONTHLY_INTEREST_RATE, UPFRONT_FEE_RATE, VAT_RATE, monthsElapsed } from '@/lib/calculator'
 
 export async function POST(req: NextRequest) {
   try {
@@ -38,14 +23,29 @@ export async function POST(req: NextRequest) {
     const disbursed = Number(loan.disbursed_amount)
 
     // Payment allocation: interest first (for every elapsed month since the
-    // last payment, or since disbursement for the first payment -- not
-    // just one month flat), then the fee+VAT receivable set up at
-    // disbursement gets cleared once the loan is fully paid off, then
-    // whatever's left reduces principal. Confirmed against real historical
-    // catch-up repayments -- see monthsElapsed()'s doc comment for the
-    // specific examples this matches.
-    const lastActivityDate = loan.last_payment_date
-      ? new Date(loan.last_payment_date)
+    // last REAL payment, or since disbursement if none exist -- not just
+    // one month flat), then the fee+VAT receivable set up at disbursement
+    // gets cleared once the loan is fully paid off, then whatever's left
+    // reduces principal.
+    //
+    // The reference date comes from iacm_payments directly, NOT
+    // iacm_loans.last_payment_date -- confirmed real incident (HABINEZA
+    // Jean Marie, INEMA-2026-0002, see docs/known-gaps.md): a bulk SQL
+    // loan reload populated last_payment_date on every loan as a synthetic
+    // placeholder (matching maturity_date) even for loans with zero real
+    // payments ever recorded. Trusting that field silently truncated a
+    // real 6-month catch-up payment to 1 month of interest and discarded
+    // 500,000 RWF of real cash under the "can't overpay" cap below. This
+    // loan's own iacm_payments history is the only trustworthy source.
+    const { data: priorPayments, error: priorPaymentsErr } = await supabase
+      .from('iacm_payments')
+      .select('payment_date')
+      .eq('loan_id', loan_id)
+      .order('payment_date', { ascending: false })
+      .limit(1)
+    if (priorPaymentsErr) return serverError(priorPaymentsErr)
+    const lastActivityDate = priorPayments && priorPayments.length > 0
+      ? new Date(priorPayments[0].payment_date)
       : new Date(loan.disbursement_date)
     const months = Number.isFinite(Number(interest_months)) && Number(interest_months) > 0
       ? Number(interest_months)
@@ -160,5 +160,25 @@ export async function POST(req: NextRequest) {
       message: `Payment recorded. Interest: RWF ${interestPortion.toLocaleString()}, Principal: RWF ${principalPortion.toLocaleString()}, New balance: RWF ${newBalance.toLocaleString()}`,
       new_balance: newBalance, status: newStatus,
     })
+  } catch (e) { return serverError(e) }
+}
+
+// Used by the Record Payment form's live preview to compute the real
+// months-elapsed/interest figure before submission, from the same source
+// (this loan's actual iacm_payments history) the POST handler above now
+// uses — see its comment on lastActivityDate for why iacm_loans.last_payment_date
+// is never trusted for this.
+export async function GET(req: NextRequest) {
+  try {
+    const auth = await requireAdminApi()
+    if (!auth.ok) return auth.response
+    const { searchParams } = new URL(req.url)
+    const loanId = searchParams.get('loan_id')
+    const supabase = createAdminClient()
+    let query = supabase.from('iacm_payments').select('*').order('payment_date', { ascending: false })
+    if (loanId) query = query.eq('loan_id', loanId)
+    const { data, error } = await query
+    if (error) return serverError(error)
+    return ok(data)
   } catch (e) { return serverError(e) }
 }

@@ -1079,3 +1079,60 @@ tonight (Salutation, Sector of Activity, Terms Duration/Repayment Term).
 The moment Devotha starts entering real values through the form, they
 start appearing in CRB exports automatically — no separate backfill,
 no bulk admin task, just the same loan-recording flow she already uses.
+
+## Real incident: last_payment_date-based interest calc silently discarded real cash (HABINEZA Jean Marie, INEMA-2026-0002, 2026-08-18)
+
+Kevin recorded a real 2,694,400 RWF payment for HABINEZA Jean Marie
+(6 months of accrued interest/principal/fee+VAT clearing on a 2,000,000
+loan disbursed 2025-12-24). The system recorded it as 1 month of
+interest and silently discarded 500,000 RWF of real cash — never
+written to `iacm_payments.total_amount`, never debited to Bank Accounts
+in the journal, never recognized as interest income.
+
+**Root cause**: `app/api/admin/iacm/payments/route.ts`'s interest
+calculation trusted `iacm_loans.last_payment_date` as "when this loan
+was last touched." The prior night's bulk SQL loan reload had populated
+that field on every one of the 21 reloaded loans as a synthetic
+placeholder equal to `maturity_date` — not real payment history —
+including on loans (13 of 21, confirmed by direct query) with zero real
+payments ever recorded in `iacm_payments`. `monthsElapsed(last_payment_date,
+payment_date)` came out to exactly 1 because Kevin's chosen payment date
+(2026-07-02) happened to match the synthetic placeholder. The resulting
+undercounted `interestOwed` fed directly into the "can't overpay" cap
+(`maxOwed = outstanding + interestOwed + feeAndVatOwed`), which then
+capped `paid` at 2,194,400 — silently truncating the real 2,694,400
+received.
+
+**Fix**: the interest calculation now queries `iacm_payments` directly
+for the loan's own most recent real `payment_date`, falling back to
+`disbursement_date` only when zero real payment rows exist —
+`iacm_loans.last_payment_date` is never read for this calculation again
+(it's still written for display purposes). Verified safe across all 21
+real loans before landing: for every loan with real payment history the
+new source matches that history exactly; for every loan with none it
+falls back to the true disbursement date. `monthsElapsed` moved to
+`lib/calculator.ts` so the Record Payment form's live preview (also
+added this incident — shows months-elapsed and the full interest/fee/
+principal breakdown before submission, plus a `interest_months`
+override input for deliberate multi-month catch-ups) can never drift
+from what the backend actually calculates, which was the direct
+proximate cause here — the old preview always assumed a flat 1 month
+and gave no warning before the caps silently applied.
+
+**Manual correction**: Habineza's incorrect payment row and journal
+entry were deleted; `iacm_loans` reverted to `balance_outstanding=
+2,000,000`, `principal_repaid=0`, `status='active'`,
+`last_payment_date=NULL` (not the synthetic placeholder — NULL is the
+truthful state, and the fix no longer depends on this field regardless).
+Confirmed clean via direct re-query and dashboard-aggregate reversion.
+Kevin re-recorded the real payment through the live UI after the fix
+landed.
+
+**Standing risk, checked and cleared**: the 6 other reloaded loans that
+already carried a real payment (0003, 0007, 0008, 0010, 0018, 0019) were
+checked directly — every `interest_portion` across all 12 of their
+payment rows correctly matches the real elapsed months, confirming
+those were loaded as historical records via the SQL reload itself, not
+entered live through the buggy route. Habineza's was the only real
+payment actually processed through the broken calculation before this
+fix landed.

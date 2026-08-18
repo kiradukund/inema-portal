@@ -52,14 +52,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         }
       }
 
-      // Also mark the imported_loan as inactive (best-effort, non-fatal)
-      const { data: profileForCancel } = await adminClient.from('profiles').select('full_name').eq('id', app.client_id).single()
-      if (profileForCancel?.full_name) {
-        await adminClient.from('imported_loans')
-          .update({ status: 'paid', notes: `CANCELLED by admin: ${review_notes}` })
-          .eq('client_name', profileForCancel.full_name)
-          .eq('status', 'active')
-      }
+      // Real risk removed, 2026-08-18: this used to also match on
+      // imported_loans by client_name and mark that row 'paid' — approve/
+      // route.ts no longer creates any imported_loans row, so this would
+      // now only ever match an unrelated, real LEGACY loan from the 11-Jun
+      // bulk import for a same-named client, silently corrupting historical
+      // data that has nothing to do with the application being rejected.
+      // See docs/known-gaps.md.
     }
 
     const { error } = await adminClient.from('loan_applications').update({

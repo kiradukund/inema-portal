@@ -1136,3 +1136,72 @@ those were loaded as historical records via the SQL reload itself, not
 entered live through the buggy route. Habineza's was the only real
 payment actually processed through the broken calculation before this
 fix landed.
+
+## Real incident: /admin/loans, /admin/clients, /admin/reminders silently disconnected from live data (2026-08-18)
+
+Kevin noticed `/admin/loans` (Portal sidebar, NOT the IACM section) still
+showed HABINEZA Jean Marie as active with RWF 0 paid, even after the
+Habineza payment fix above landed and was verified correct in
+`iacm_loans`. Investigated directly: this page — and `/admin/clients`
+and `/admin/reminders` alongside it — reads `imported_loans`/
+`imported_clients`, a completely separate table pair frozen from an
+11-Jun-2026 bulk Excel import, structurally disconnected from
+`iacm_loans`/`iacm_clients` (confirmed: no FK relationship exists
+between the two systems). Confirmed the same disconnect for every real
+client checked (Habineza, Bizimana Andre, Francine, Desire Demino), not
+Habineza-specific.
+
+Grepping the whole app for `imported_loans`/`imported_clients` found
+this went beyond display pages: `app/api/admin/applications/[id]/
+approve/route.ts` was **writing new loans into `imported_loans`** on
+every loan-application approval — a live write-path bug, not just a
+stale read. Checked the real blast radius: `loan_applications` has zero
+rows ever, so this had caused zero real damage (the only two
+post-import `imported_loans` rows, created 2026-08-03, were dev-test
+entries under "Devotha Kubwimana" with gibberish notes) — but it was a
+live landmine for the day someone actually used that feature. Also
+found `app/api/admin/applications/[id]/reject/route.ts` updating
+`imported_loans` by matching on `client_name` — with `approve` no
+longer creating rows there, this would only ever have matched and
+corrupted an unrelated real legacy loan for a same-named client.
+
+**Fix, three tiers**:
+1. Added a shared `StaleDataBanner` component (`app/admin/
+   StaleDataBanner.tsx`) to all three pages: a prominent "Historical /
+   Imported Data — Not Current" warning with a direct link to the real
+   equivalent (`/admin/iacm/loans` for Loans/Clients, `/admin` for
+   Reminders — its live overdue/maturing alerts already exist there,
+   built from real `iacm_loans`).
+2. `approve/route.ts` no longer writes to `imported_loans`/
+   `installments` at all. Deliberately NOT replaced with an
+   `iacm_loans`/`iacm_clients` insert either — a portal application only
+   captures loan_type/amount/term plus the applicant's profile (name/
+   phone/email), none of the national_id/district/gender/marital_status/
+   date_of_birth that `iacm_clients` requires and the New Loan form
+   already collects. Auto-creating a client record with placeholder KYC
+   data would silently produce a low-quality real record. The approval
+   still completes (status update, portal-facing `loans` record used by
+   the real client portal, approval email) but the response now says
+   "⚠️ This is NOT yet in the IACM Loan Portfolio — go to New Loan and
+   enter it manually with full KYC" — and `ApplicationActions.tsx` was
+   fixed to actually display that message (it was previously discarding
+   the API's returned message and showing its own hardcoded "✓
+   Approved" text). `reject/route.ts`'s dangerous `imported_loans`
+   update removed outright.
+3. Cleaned up `imported_loans`/`imported_clients` to only the 21
+   current real clients' history (older paid-off loans kept as
+   reference) plus removal of the 2 dev-test rows. Matching by
+   `national_id` was impossible — every `imported_clients.nid` is null
+   — so this was name-based, which required real care: exact-name
+   matching alone would have wrongly deleted history for 14 of 21
+   current clients whose legacy records are first-name-only (e.g.
+   imported "stella" = real "TUYISENGE MATUTINA Stella"). A fuzzy pass
+   caught this before any deletion; 2 genuinely ambiguous cases ("Desire
+   Demino", "marie" — each matching 2 possible real clients) were sent
+   to Kevin rather than guessed, resolved by exact disbursement-date
+   match and by elimination (the other candidate was already separately
+   correctly attributed). Full pre-deletion backup of both tables:
+   `C:\Users\hp\Desktop\imported_data_backup_2026-08-18.json`. Executed
+   in FK order (installments → imported_loans → imported_clients, 4/12/8
+   rows), verified `iacm_loans`/`iacm_clients`/`iacm_payments`/journal
+   exact ID sets identical before and after, not just row counts.

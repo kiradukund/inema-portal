@@ -1,5 +1,6 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient } from '@/lib/supabase'
+import { StaleDataBanner } from '../StaleDataBanner'
 
 export default async function AdminClients() {
   await requireAdmin()
@@ -18,6 +19,8 @@ export default async function AdminClients() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      <StaleDataBanner currentHref="/admin/iacm/loans" currentLabel="Loan Portfolio (current clients & balances)" />
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Clients</h1>

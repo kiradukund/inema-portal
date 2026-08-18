@@ -35,7 +35,13 @@ export default function ApplicationActions({ id, clientName, clientPhone, amount
     })
     const data = await res.json()
     setLoading(null)
-    if (data.success) { setDone(`✓ Approved RWF ${Number(approveAmount).toLocaleString()}`); setShowApprove(false) }
+    // The route no longer auto-creates an IACM record for this loan (see
+    // its own comment for why — a portal application lacks the KYC fields
+    // iacm_clients requires) and says so in data.data.message. Previously
+    // this component discarded that message entirely and showed its own
+    // hardcoded "✓ Approved" text, so the warning would never have reached
+    // Devotha/Kevin — surfacing it here is the whole point of adding it.
+    if (data.success) { setDone(`✓ Approved RWF ${Number(approveAmount).toLocaleString()} — ⚠️ enter manually in New Loan (not yet in IACM)`); setShowApprove(false) }
     else alert('Error: ' + (data.error ?? 'Failed'))
   }
 

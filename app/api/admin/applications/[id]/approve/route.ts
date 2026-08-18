@@ -38,27 +38,26 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const { data: profile } = await adminSupabase.from('profiles').select('full_name, phone, email').eq('id', app.client_id).single()
     const clientName = profile?.full_name ?? 'Client'
 
-    const { count: loanCount } = await adminSupabase.from('imported_loans').select('*', { count: 'exact', head: true })
-    const loanNumber = `LN-${new Date().getFullYear()}-${String((loanCount ?? 0) + 1).padStart(4, '0')}`
     const startDate  = new Date()
     const repayDate  = new Date(startDate)
     repayDate.setMonth(repayDate.getMonth() + approved_term)
 
-    const { data: importedLoan } = await adminSupabase.from('imported_loans').insert({
-      client_name: clientName, principal: approved_amount, loan_type: app.loan_type,
-      term_months: approved_term, date_offered: startDate.toISOString().split('T')[0],
-      repayment_date: repayDate.toISOString().split('T')[0], total_due: calc.total_repayment,
-      amount_paid: 0, outstanding: calc.total_repayment, status: 'active',
-      has_installments: true, notes: `Portal app ${app.application_number}. ${review_notes}`, source: 'portal',
-    }).select().single()
-
-    if (importedLoan) {
-      const installments = calc.schedule.map((s: any, i: number) => ({
-        loan_id: importedLoan.id, client_name: clientName, num: i + 1,
-        amount: s.total_payment, due_date: s.due_date, status: 'not paid', amount_paid: 0,
-      }))
-      await adminSupabase.from('installments').insert(installments)
-    }
+    // Real incident, 2026-08-18: this used to also insert into imported_loans
+    // + installments — the frozen, stale legacy tables that /admin/loans,
+    // /admin/clients, and /admin/reminders read from (confirmed disconnected
+    // from live data, see docs/known-gaps.md). Deliberately NOT replaced with
+    // an iacm_loans/iacm_clients insert either: a portal application only
+    // captures loan_type/amount/term plus the applicant's profile
+    // (name/phone/email) — none of national_id, district, gender,
+    // marital_status, or date_of_birth that iacm_clients requires and the
+    // New Loan form already collects. Auto-creating a client record with
+    // placeholder KYC data would silently produce a low-quality real
+    // record; Devotha processes this through New Loan by hand instead,
+    // where full KYC is enforced. See the loanNumber below (LN-YYYY-####)
+    // for the client-portal-facing record only — that's real, actively
+    // used by app/(portal)/loans, and untouched by this fix.
+    const { count: loanCount } = await adminSupabase.from('loans').select('*', { count: 'exact', head: true })
+    const loanNumber = `LN-${new Date().getFullYear()}-${String((loanCount ?? 0) + 1).padStart(4, '0')}`
 
     const { data: clientLoan, error: loanErr } = await adminSupabase.from('loans').insert({
       client_id: app.client_id,
@@ -114,7 +113,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     } catch (e) { console.error('Approval email failed (non-fatal):', e) }
 
     return ok({
-      message: `Approved for ${clientName}. RWF ${approved_amount.toLocaleString()} / ${approved_term}mo.`,
+      message: `Approved for ${clientName}. RWF ${approved_amount.toLocaleString()} / ${approved_term}mo. ` +
+        `⚠️ This is NOT yet in the IACM Loan Portfolio — go to New Loan and enter it manually with full KYC to start tracking payments and the ledger.`,
       loan_id: clientLoan.id, client_phone: profile?.phone ?? '', total_repayment: calc.total_repayment,
     })
   } catch (e) { return serverError(e) }

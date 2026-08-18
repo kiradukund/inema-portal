@@ -1,5 +1,6 @@
 import { requireAdmin, formatRWF, daysUntil } from '@/lib/admin'
 import { createServerSupabaseClient } from '@/lib/supabase'
+import { StaleDataBanner } from '../StaleDataBanner'
 
 export default async function AdminReminders() {
   await requireAdmin()
@@ -95,6 +96,8 @@ export default async function AdminReminders() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
+      <StaleDataBanner currentHref="/admin" currentLabel="Dashboard (real overdue/maturing alerts)" />
+
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-800">Payment Reminders</h1>
         <p className="text-slate-500 text-sm mt-1">

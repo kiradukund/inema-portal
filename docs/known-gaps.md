@@ -1205,3 +1205,43 @@ corrupted an unrelated real legacy loan for a same-named client.
    in FK order (installments → imported_loans → imported_clients, 4/12/8
    rows), verified `iacm_loans`/`iacm_clients`/`iacm_payments`/journal
    exact ID sets identical before and after, not just row counts.
+
+## Real bug: payoff fee-clearing ignored fee already paid by an earlier real payment (NZUNGIZE Emmanuel, INEMA-2026-0010, 2026-08-18)
+
+Caught on a live payment preview before submission, not after. Kevin
+tried to record 518,880 against Nzungize's loan (real outstanding
+418,880) and the preview showed it trying to clear another 94,400
+fee/VAT — but this loan's fee/VAT was already fully cleared by his real
+first payment (2026-03-13, `fee_portion=94,400`). No receivable was
+left to clear.
+
+**Root cause**: `payments/route.ts`'s `feeAndVatOwed = disbursed *
+UPFRONT_FEE_RATE * (1 + VAT_RATE)` was computed purely from
+`disbursed_amount`, with no reference to any prior payment's
+`fee_portion` — it always assumed the full original fee+VAT was still
+owed on any payoff. Worked correctly for Habineza (a genuine first-ever
+payment, so the assumption happened to be true) and broke for Nzungize
+(multiple real partial payments already made, fee cleared early). Real
+consequence, worse than cosmetic: the phantom 94,400 would have been
+carved out of the payment before principal, leaving a fake 94,400
+balance and blocking the loan from actually closing on a payment that
+genuinely covered it in full — plus a duplicate AR-clearing journal
+credit against a receivable already at zero in the real ledger (this
+loan's historical payments predate the ledger cutoff and never touched
+the journal, so the opening balance already reflects the March
+clearing).
+
+**Fix**: `feeAndVatOwed` is now netted against this loan's own
+cumulative `fee_portion` already paid
+(`feeRemaining = max(0, feeAndVatOwed - feeAlreadyCleared)`), used
+everywhere the unconditional figure was. Same fix applied to the
+Record Payment form's live preview — the whole point of that preview
+is to never show something the backend wouldn't actually do, and it
+would have kept showing this exact phantom fee otherwise. Verified
+read-only against real data before landing: re-simulating Nzungize's
+exact pending payment now correctly produces `feePortion=0`,
+`principalPortion=418,880`, `newBalance=0` (closes); re-deriving
+Habineza's already-completed payoff under the same fixed logic
+reproduces his real recorded `feePortion=94,400` exactly unchanged —
+a strict generalization, not a behavior change for the case already
+proven live.

@@ -39,10 +39,9 @@ export async function POST(req: NextRequest) {
     // loan's own iacm_payments history is the only trustworthy source.
     const { data: priorPayments, error: priorPaymentsErr } = await supabase
       .from('iacm_payments')
-      .select('payment_date')
+      .select('payment_date, fee_portion')
       .eq('loan_id', loan_id)
       .order('payment_date', { ascending: false })
-      .limit(1)
     if (priorPaymentsErr) return serverError(priorPaymentsErr)
     const lastActivityDate = priorPayments && priorPayments.length > 0
       ? new Date(priorPayments[0].payment_date)
@@ -54,19 +53,33 @@ export async function POST(req: NextRequest) {
     const interestOwed = monthlyInterest * months
     const feeAndVatOwed = disbursed * UPFRONT_FEE_RATE * (1 + VAT_RATE)
 
+    // Real bug found 2026-08-18 (NZUNGIZE Emmanuel, INEMA-2026-0010): this
+    // used to assume the full original fee+VAT was always still owed on any
+    // payoff, even when an earlier REAL payment on this loan had already
+    // cleared it (his first payment, 2026-03-13, fee_portion=94,400 -- no
+    // receivable left). That produced a phantom "still owing" fee, blocked
+    // the loan from actually closing on a payment that genuinely covered
+    // the real balance in full, and would have posted a duplicate
+    // fee-clearing journal credit against an AR balance already at zero in
+    // the real ledger. Net against this loan's own cumulative fee_portion
+    // already paid -- zero for a genuine first-ever payoff (Habineza's
+    // case, unaffected by this change), the real remainder otherwise.
+    const feeAlreadyCleared = (priorPayments ?? []).reduce((s, p: any) => s + Number(p.fee_portion ?? 0), 0)
+    const feeRemaining = Math.max(0, feeAndVatOwed - feeAlreadyCleared)
+
     // "Can't overpay" needs to cap against everything that can actually be
     // owed on a full payoff (principal + accrued interest + any unpaid
     // fee/VAT) -- capping against `outstanding` (principal-only) alone
     // silently discarded the interest/fee portion of a real payoff payment,
     // exactly the kind of transaction the BIZIMANA/STELLA examples are.
-    const maxOwed = outstanding + interestOwed + feeAndVatOwed
+    const maxOwed = outstanding + interestOwed + feeRemaining
     const paid = Math.min(total_amount, maxOwed)
 
     const interestPortion = Math.min(paid, interestOwed)
     const remainderAfterInterest = paid - interestPortion
 
     const isPayoff = outstanding - remainderAfterInterest <= 0
-    const feePortion = isPayoff ? Math.min(remainderAfterInterest, feeAndVatOwed) : 0
+    const feePortion = isPayoff ? Math.min(remainderAfterInterest, feeRemaining) : 0
     const principalPortion = Math.min(outstanding, Math.max(0, remainderAfterInterest - feePortion))
 
     const newBalance = Math.max(0, outstanding - principalPortion)

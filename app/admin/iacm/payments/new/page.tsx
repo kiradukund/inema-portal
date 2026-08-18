@@ -48,12 +48,18 @@ function PaymentForm() {
         const months = Number(monthsOverride) > 0 ? Number(monthsOverride) : monthsElapsed(lastActivityDate, new Date(date))
         const interestOwed = disbursed * MONTHLY_INTEREST_RATE * months
         const feeAndVatOwed = disbursed * UPFRONT_FEE_RATE * (1 + VAT_RATE)
-        const maxOwed = outstanding + interestOwed + feeAndVatOwed
+        // Same fix as the backend route (see its comment) -- net against
+        // fee already cleared by a real prior payment on this loan, so the
+        // preview never shows a phantom "still owing" fee the backend
+        // wouldn't actually charge.
+        const feeAlreadyCleared = priorPayments.reduce((s: number, p: any) => s + Number(p.fee_portion ?? 0), 0)
+        const feeRemaining = Math.max(0, feeAndVatOwed - feeAlreadyCleared)
+        const maxOwed = outstanding + interestOwed + feeRemaining
         const paid = Math.min(Number(amount), maxOwed)
         const interestPortion = Math.min(paid, interestOwed)
         const remainderAfterInterest = paid - interestPortion
         const isPayoff = outstanding - remainderAfterInterest <= 0
-        const feePortion = isPayoff ? Math.min(remainderAfterInterest, feeAndVatOwed) : 0
+        const feePortion = isPayoff ? Math.min(remainderAfterInterest, feeRemaining) : 0
         const principalPortion = Math.min(outstanding, Math.max(0, remainderAfterInterest - feePortion))
         const overpaidAndCapped = Number(amount) > maxOwed
         setPreview({

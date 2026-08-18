@@ -1245,3 +1245,35 @@ Habineza's already-completed payoff under the same fixed logic
 reproduces his real recorded `feePortion=94,400` exactly unchanged —
 a strict generalization, not a behavior change for the case already
 proven live.
+
+## Real incident: cleared override silently fell back to auto-calc with no visible signal (BAHATI Eric, INEMA-2026-0005, 2026-08-18)
+
+Kevin entered `5` into "Months of Interest to Charge" and submitted a
+payment for Bahati Eric (Feb 12 disbursement). The recorded payment
+showed `interest_portion=500,000` — exactly 4 months, not 5.
+
+Investigated directly: no code-level bug found. `submit()` reads
+`monthsOverride` from current state at call time with no staleness or
+clearing logic anywhere in the client. The evidence instead pointed at
+the override field being genuinely empty at submission — an
+independent recompute of clean auto-calc (`monthsElapsed(2026-02-12,
+2026-07-03)`) produced exactly 500,000, a perfect match to what's
+stored, and the submitted `total_amount` (3,118,000) was *also* exactly
+the clean 4-month full-payoff total — both fields agreed with each
+other as a 4-month transaction, not a partially-corrupted 5-month one.
+
+The real, fixable problem: the override field gave **no visible signal**
+if it went from set to empty right before submit — a user could type
+`5`, watch the preview update correctly, then lose that value (however
+it happened) and submit believing the override was still active, with
+nothing on screen contradicting that belief. Fixed: the Payment
+Breakdown now leads with an explicit, high-contrast mode badge —
+"⚠ MANUAL OVERRIDE ACTIVE" (amber) vs "Auto-calculated (no override
+set)" (neutral) — and the months line itself says which mode produced
+its number, not just "(auto-calculated)" unconditionally as before.
+
+Reversed and reverified clean: payment + journal entry deleted, loan
+restored to `balance_outstanding=2,500,000`, `principal_repaid=0`,
+`status='active'`, `last_payment_date=NULL` — every field re-queried
+fresh after the writes, not assumed from the delete calls' own return
+values.

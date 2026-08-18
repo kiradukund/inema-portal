@@ -45,7 +45,8 @@ function PaymentForm() {
         const outstanding = Number(loan.balance_outstanding)
         const disbursed = Number(loan.disbursed_amount)
         const lastActivityDate = priorPayments.length > 0 ? new Date(priorPayments[0].payment_date) : new Date(loan.disbursement_date)
-        const months = Number(monthsOverride) > 0 ? Number(monthsOverride) : monthsElapsed(lastActivityDate, new Date(date))
+        const isOverrideActive = Number(monthsOverride) > 0
+        const months = isOverrideActive ? Number(monthsOverride) : monthsElapsed(lastActivityDate, new Date(date))
         const interestOwed = disbursed * MONTHLY_INTEREST_RATE * months
         const feeAndVatOwed = disbursed * UPFRONT_FEE_RATE * (1 + VAT_RATE)
         // Same fix as the backend route (see its comment) -- net against
@@ -63,7 +64,7 @@ function PaymentForm() {
         const principalPortion = Math.min(outstanding, Math.max(0, remainderAfterInterest - feePortion))
         const overpaidAndCapped = Number(amount) > maxOwed
         setPreview({
-          outstanding, months, lastActivityDate: lastActivityDate.toISOString().split('T')[0],
+          outstanding, months, isOverrideActive, lastActivityDate: lastActivityDate.toISOString().split('T')[0],
           interestOwed, interestPortion, principalPortion, feePortion, paid, overpaidAndCapped,
           newBalance: Math.max(0, outstanding - principalPortion),
         })
@@ -140,9 +141,17 @@ function PaymentForm() {
 
         {preview && (
           <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-sm">
-            <p className="font-bold text-green-800 mb-2">Payment Breakdown (auto-calculated)</p>
+            <p className="font-bold text-green-800 mb-2">Payment Breakdown</p>
+            {/* Real incident, 2026-08-18 (BAHATI Eric, INEMA-2026-0005): a
+                cleared/empty override silently fell back to auto-calc with
+                no visible signal, and the payment was submitted believing
+                a manual override was still active. This line makes the
+                active mode impossible to miss right before submit. */}
+            <div className={`mb-2 px-2 py-1 rounded text-xs font-bold ${preview.isOverrideActive ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-slate-100 text-slate-600'}`}>
+              {preview.isOverrideActive ? '⚠ MANUAL OVERRIDE ACTIVE' : 'Auto-calculated (no override set)'}
+            </div>
             <div className="space-y-1">
-              <div className="flex justify-between"><span className="text-slate-600">Months of interest charged</span><span className="font-semibold">{preview.months} month{preview.months === 1 ? '' : 's'} (since {preview.lastActivityDate})</span></div>
+              <div className="flex justify-between"><span className="text-slate-600">Months of interest charged</span><span className="font-semibold">{preview.months} month{preview.months === 1 ? '' : 's'} {preview.isOverrideActive ? '(manual override)' : `(auto-calculated, since ${preview.lastActivityDate})`}</span></div>
               <div className="flex justify-between"><span className="text-slate-600">Interest owed for that period</span><span className="font-semibold">RWF {preview.interestOwed.toLocaleString()}</span></div>
               <div className="flex justify-between"><span className="text-slate-600">Interest portion</span><span className="font-semibold">RWF {preview.interestPortion.toLocaleString()}</span></div>
               {preview.feePortion > 0 && (

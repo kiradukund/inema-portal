@@ -1367,11 +1367,46 @@ shown as fully paid, using its real 2026-06-30 opening balance of
 3,000), 2540 correctly shows a real remaining 50,000 (opening 164,000
 minus this 114,000 settlement) — combined total across all three
 accounts unchanged at 50,000 before and after, confirming a pure
-reclassification with zero effect on Total Assets or Net Profit. The
-other four items (Jan-1 opening balance with no narration, two generic
-"Expenses paid by cash[...]" entries, and the 6300 double-coding
-anomaly) remain open, pending Kevin's input — not resolved, not
-guessed.
+reclassification with zero effect on Total Assets or Net Profit.
+
+**Item C fixed** (2026-08-19, journal entry `d574bf7c-05b1-46ed-9d46-
+efc2c18a9151`, dated 2026-04-13, narration "Miscellaneous Expenses"):
+this was a confirmed data-entry error, not a categorization judgment
+call — one line correctly coded `6300` "Miscellaneous Expenses" (credit
+30,000), the other line already correctly *named* "Cash on Hand" but
+*coded* `6300` too instead of the real cash account. Corrected line
+`f8047833-2b26-4706-ba4f-7a9e09aa63e9`'s `account_code` to `3010`
+(Cash on Hand) — amount and name untouched, entry still balances at
+30,000/30,000. Confirmed zero effect on any live balance: this entry
+predates the 2026-06-30 ledger cutoff, so it was already excluded from
+every `getAccountBalance()` query before the fix and remains excluded
+after — Total Assets and Net Profit were never reading it either way.
+
+**Items A, B, and D remain genuinely unresolvable from data alone** —
+flagged here for a real conversation with Devotha, not guessed:
+
+- **Item A** — journal entry `337768c3-3e40-40fc-a462-dc3d5d30a232`,
+  dated 2026-01-01, `entry_type='opening'`, account `2640` Tax Payable,
+  204,165 credit. **Narration is completely empty.** No
+  `iacm_opening_balances` row exists for 2640 either — this figure
+  lives only as this one journal line. Unknown whether it's 100%
+  genuine Corporate Income Tax carried from the prior year, or a
+  bundled starting balance across several liability types (PAYE/CBHI/
+  Pension/Maternity/WHT/Corporate Tax) collapsed into one number during
+  the historical backfill. If bundled, it should be split across
+  several real opening-balance rows, not left as one lump 2640 figure.
+
+- **Item B** — journal entry `9b3b1991-80fa-4d17-96c0-02bc96748ec4`,
+  dated 2026-03-31, account `6300` Miscellaneous Expenses, 199,500
+  debit. Narration exactly **"Expenses paid by cash"** — no further
+  detail. Could be communication, stationery, transport, petty cash, or
+  genuine miscellaneous; nothing in the record narrows it down.
+
+- **Item D** — journal entry `3c9075dd-37c2-467b-b138-bc21f0ef6288`,
+  dated 2026-06-30, account `6300` Miscellaneous Expenses, 191,500
+  debit. Narration exactly **"Expenses paid by cash from April to June
+  2026"** — a full quarter of unspecified cash expenses lumped into one
+  figure, same problem as Item B, three months wide.
 
 Communication/stationery/transport/advertising/legal/maintenance/
 petty_cash categories remain a separate, still-open gap: several map

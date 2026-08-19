@@ -1357,6 +1357,22 @@ the underlying salary cost was already recognized when the liability
 first accrued, recording the settlement through `iacm_expenses` could
 double-count it in Net Profit.
 
+**Update, same night**: the two confirmed-clear entries (maternity
+3,000, PAYE 114,000) were reclassified — journal lines moved from 2640
+to 2550/2540 respectively, `iacm_expenses.category` updated to match.
+Re-verified with real balances, not just row counts: 2640 correctly
+returns to 0 (no longer holding amounts that were never really its),
+2550 correctly nets to exactly 0 (the real June maternity liability now
+shown as fully paid, using its real 2026-06-30 opening balance of
+3,000), 2540 correctly shows a real remaining 50,000 (opening 164,000
+minus this 114,000 settlement) — combined total across all three
+accounts unchanged at 50,000 before and after, confirming a pure
+reclassification with zero effect on Total Assets or Net Profit. The
+other four items (Jan-1 opening balance with no narration, two generic
+"Expenses paid by cash[...]" entries, and the 6300 double-coding
+anomaly) remain open, pending Kevin's input — not resolved, not
+guessed.
+
 Communication/stationery/transport/advertising/legal/maintenance/
 petty_cash categories remain a separate, still-open gap: several map
 to real account codes (6220–6290) that mean something entirely

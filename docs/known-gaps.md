@@ -1414,3 +1414,33 @@ to real account codes (6220–6290) that mean something entirely
 different per the Accounts sheet (e.g. `communication` → 6220, which
 is really "Utilities"; real Communication Expenses is 6270). Out of
 scope for this fix.
+
+## Real bug: Inquiries sidebar badge never cleared (2026-08-19)
+
+Kevin noticed the Inquiries badge stayed stuck at "3" no matter how
+many times he opened the page — unlike the Applications "Pending"
+count, which correctly drops when an application's `status` actually
+changes (approve/reject). Traced precisely: the badge
+(`app/admin/layout.tsx`) counts `contact_messages` where
+`is_read=false` — a real, correctly-used field (`inquiries/page.tsx`
+already reads it for unread styling). But grepping every reference to
+`contact_messages` in the app found only three: the public contact
+form inserts, the layout reads the count, and the inquiries page reads
+and displays. **No `.update()` on `is_read` existed anywhere.** Opening
+the page was a pure read; nothing ever wrote the field back. Confirmed
+against real data: all 3 real messages (dated 2026-06-25, nearly two
+months old) were still `is_read=false` despite being viewed repeatedly
+over the course of this whole session.
+
+**Fix**: `inquiries/page.tsx` now bulk-updates every currently-unread
+message to `is_read=true` right after fetching them, using the
+already-in-scope admin (service-role) client. The page's own render
+still reflects what was unread *on load* (computed before the update
+runs) — correct, not a race bug — while `layout.tsx` computes its
+badge independently on every request, so the badge itself only
+reflects the cleared state on the *next* load, not instantly
+mid-navigation. Tested end-to-end against the real 3 messages, not
+synthetic data: confirmed all 3 flip to `is_read=true`, the badge
+query drops from 3 to 0, a second simulated visit is a clean no-op,
+and every other field (`replied_at`, message content) stayed
+untouched.

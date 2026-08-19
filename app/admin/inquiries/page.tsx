@@ -9,6 +9,21 @@ export default async function AdminInquiries() {
   const { data: messages } = await supabase.from('contact_messages').select('*').order('created_at', { ascending: false })
   const all = messages ?? []
   const unread = all.filter(m => !m.is_read).length
+
+  // Real bug found 2026-08-19: the sidebar badge (app/admin/layout.tsx)
+  // counts contact_messages where is_read=false, but nothing anywhere in
+  // the app ever set is_read=true -- opening this page was a pure read,
+  // so the badge stayed stuck forever no matter how many times it was
+  // viewed. Mark everything currently unread as read now that Kevin is
+  // looking at it. `all`/`unread` above were already fetched before this
+  // runs, so this page's own render still reflects what WAS unread on
+  // load (correct — you should see what you're about to clear); only the
+  // *next* page load, and the sidebar badge on it, reflects the cleared
+  // state, since app/admin/layout.tsx computes its own count independently
+  // on every request and this page's render doesn't block or feed it.
+  if (unread > 0) {
+    await supabase.from('contact_messages').update({ is_read: true }).eq('is_read', false)
+  }
   const loanLabel: Record<string,string> = { salary_advance:'Salary Advance', quinzaine:'Quinzaine', school_fees:'School Fees', business:'Business', general:'General' }
 
   return (

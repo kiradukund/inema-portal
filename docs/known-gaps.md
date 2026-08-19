@@ -1305,3 +1305,61 @@ correctly allocated interest → fee → principal against the real amount
 received, journal balances, and the small remaining balance is left
 on record as-is, honestly reflecting a genuine tiny shortfall rather
 than being written off or adjusted.
+
+## Real gap: PAYE/CBHI/Pension/Maternity/WHT had no distinct expense category (2026-08-19)
+
+Kevin provided the real, authoritative chart of accounts (confirmed
+against the "Accounts" sheet in `INEMA_Journal_Q3_2026.xlsx`, which
+matches his list exactly) and suspected these were being lumped into
+2640 Tax Payable. Confirmed: `expenses/route.ts`'s old `EXPENSE_ACCOUNTS`
+had no `paye`/`cbhi`/`pension`/`maternity`/`wht` key at all — the single
+`'tax'` category (labeled "Tax Payments (PAYE, RSSB, CBHI)") absorbed
+all of them into 2640. The route's own prior comment claimed these
+"already have their own dedicated codes... settled alongside salary" —
+that was never actually true in code; no such path existed.
+
+Real historical evidence from the Journal sheet (638 real rows):
+every month Dec 2025 – Jun 2026, PAYE/Maternity/Pension/CBHI were
+correctly posted to 2540/2550/2560/2570 (13 times each) — the *real*
+bookkeeping got this right consistently. One real exception: two June
+entries were misfiled to 2640 on 2026-07-08 in Devotha's own manual
+journal — and the same two entries had already been backfilled into
+the live `iacm_expenses`/journal exactly as miscoded.
+
+**Fix**: added `paye`(2540)/`cbhi`(2570)/`pension`(2560)/`maternity`(2550)/
+`wht`(2590) as their own real categories in `expenses/route.ts` and the
+Record Expense form. `tax` now specifically means Corporate Income Tax
+(2640), matching its one genuine historical use.
+
+**Audit of everything currently on 2640/6300** (8 real journal lines,
+full list and confidence levels shown to Kevin before any change):
+confirmed-clear miscategorization on the two live entries described
+above ("maternity payment for june 2026" 3,000, "PAYE Payment for june"
+114,000 — both explicitly named in their own narration, both dated
+2026-07-08). Confirmed correct and left alone: the real "Corporate
+Income tax" entry (204,165, 2026-03-31). Flagged, not resolved, pending
+Kevin's input: a Jan-1 opening balance on 2640 with no narration
+(unknown whether it's pure Corporate Income Tax or a bundled figure
+across several liability types); two generic "Expenses paid by cash[...]"
+6300 entries with no category signal in their narration; and a real
+data-quality anomaly — one 6300 journal entry has BOTH its lines coded
+to account 6300 (one mislabeled "Cash on Hand" despite the 6300 code),
+meaning no actual cash/bank account is touched by that transaction at
+all. Confirmed reclassifying an account code has zero effect on Total
+Assets or Net Profit (neither KPI reads journal account codes for
+these — Net Profit sums `iacm_expenses.amount` directly regardless of
+category; Total Assets only sums the 3xxx asset codes).
+
+Separately worth a real look sometime, not resolved here: PAYE/CBHI/
+Pension/Maternity *settlements* (paying down an already-accrued
+liability) are balance-sheet transactions, not new P&L expenses — if
+the underlying salary cost was already recognized when the liability
+first accrued, recording the settlement through `iacm_expenses` could
+double-count it in Net Profit.
+
+Communication/stationery/transport/advertising/legal/maintenance/
+petty_cash categories remain a separate, still-open gap: several map
+to real account codes (6220–6290) that mean something entirely
+different per the Accounts sheet (e.g. `communication` → 6220, which
+is really "Utilities"; real Communication Expenses is 6270). Out of
+scope for this fix.

@@ -2,8 +2,13 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+// Real evidence, 2026-08-19: PAYE/CBHI/Pension/Maternity previously had no
+// category of their own -- the old 'tax' option ("Tax Payments (PAYE, RSSB,
+// CBHI)") silently routed all of them into the generic 2640 Tax Payable
+// account, even though Devotha's real historical bookkeeping always used
+// their own distinct codes (2540/2550/2560/2570). See docs/known-gaps.md.
 const CATEGORIES = [
-  { value: 'personnel', label: 'Personnel Expenses (Salaries, PAYE, RSSB)' },
+  { value: 'personnel', label: 'Personnel Expenses (Salaries)' },
   { value: 'rent', label: 'Rent & Utilities' },
   { value: 'bank_charges', label: 'Bank Charges & Commissions' },
   { value: 'communication', label: 'Communication & Internet' },
@@ -13,7 +18,12 @@ const CATEGORIES = [
   { value: 'legal', label: 'Legal & Professional Fees' },
   { value: 'maintenance', label: 'Maintenance & Repairs' },
   { value: 'petty_cash', label: 'Petty Cash / Miscellaneous' },
-  { value: 'tax', label: 'Tax Payments (PAYE, RSSB, CBHI)' },
+  { value: 'paye', label: 'PAYE Payables' },
+  { value: 'cbhi', label: 'CBHI Payables' },
+  { value: 'pension', label: 'Pension and Risk Contribution Payables' },
+  { value: 'maternity', label: 'Maternity Contribution Payables' },
+  { value: 'wht', label: 'Withholding Tax (WHT) Payables' },
+  { value: 'tax', label: 'Corporate Income Tax' },
   { value: 'depreciation', label: 'Depreciation' },
   { value: 'other', label: 'Other Operating Expenses' },
 ]

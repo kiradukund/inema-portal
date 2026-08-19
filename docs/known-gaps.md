@@ -1277,3 +1277,31 @@ restored to `balance_outstanding=2,500,000`, `principal_repaid=0`,
 `status='active'`, `last_payment_date=NULL` — every field re-queried
 fresh after the writes, not assumed from the delete calls' own return
 values.
+
+## Real bug: Monthly Expenses on IACM Home used the same UTC-shift date bug already fixed elsewhere (2026-08-19)
+
+`app/admin/iacm/page.tsx:20` computed "start of this month" via
+`new Date(year, month, 1).toISOString().split('T')[0]` — the exact
+same root cause as the Monthly Collections chart bug fixed earlier:
+converting a locally-constructed date to UTC shifts day=1 back to the
+last day of the previous month on this UTC+2 server. Confirmed live:
+this printed `2026-07-31` instead of `2026-08-01`. Currently invisible
+— the only 2 real expenses ever (500 and 3,000 RWF) are both dated in
+early July, outside the affected window either way — but would
+silently miscount any expense dated on the actual month boundary going
+forward. Fixed with the same pattern as the Collections chart: read
+the month-start key back via local getters, no `toISOString()`
+round-trip. Verified real August total is still correctly RWF 0 under
+the fix, and confirmed the boundary itself: a hypothetical July 31
+expense would be wrongly counted as "this month" under the old logic
+but correctly excluded under the new one.
+
+Also investigated the same night: HABIMANA Emmanuel's loan showing
+`balance_outstanding=118.32` — traced to a real payment
+(`total_amount=1,197,800`) that was genuinely 118.32 RWF short of a
+clean full payoff (`150,090` interest + `47,228.32` fee + `1,000,600`
+principal = `1,197,918.32` needed). Confirmed not a bug — the system
+correctly allocated interest → fee → principal against the real amount
+received, journal balances, and the small remaining balance is left
+on record as-is, honestly reflecting a genuine tiny shortfall rather
+than being written off or adjusted.

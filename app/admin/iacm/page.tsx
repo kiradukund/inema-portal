@@ -14,13 +14,20 @@ export default async function IACMDashboard() {
     .eq('status', 'active')
     .order('maturity_date', { ascending: true })
 
+  const today = new Date()
+  // Real bug, found 2026-08-19: new Date(y, m, 1).toISOString() converts a
+  // locally-constructed "day 1, 00:00 local" Date to UTC, which on this
+  // UTC+2 server shifts it back to the LAST day of the PREVIOUS month —
+  // same root-cause class already found and fixed in the Monthly
+  // Collections chart (app/admin/page.tsx). Read the month-start key back
+  // via local getters instead of round-tripping through UTC.
+  const monthStart = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-01`
   const { data: expenses } = await supabase
     .from('iacm_expenses')
     .select('amount, expense_date')
-    .gte('expense_date', new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().split('T')[0])
+    .gte('expense_date', monthStart)
 
   const all = loans ?? []
-  const today = new Date()
 
   const totalOutstanding = all.reduce((s, l) => s + Number(l.balance_outstanding ?? 0), 0)
   const totalDisbursed = all.reduce((s, l) => s + Number(l.disbursed_amount ?? 0), 0)

@@ -11,6 +11,14 @@ export async function POST(req: NextRequest) {
     const body = await req.json()
     const { expense_date, category, description, amount, payment_method } = body
     if (!expense_date || !category || !description || !amount) return err('Missing required fields')
+    // Rejected before any insert happens -- a stale client (cached page,
+    // old bookmark) sending the removed 'petty_cash' category must not
+    // create an orphaned iacm_expenses row with no journal entry, and must
+    // not silently fall back to 'other' (6300) either; that would just
+    // trade one wrong account for another. See EXPENSE_ACCOUNTS below.
+    if (category === 'petty_cash') {
+      return err("'petty_cash' has been removed — use Cash Withdrawal / Transfer instead, this is not a real expense")
+    }
 
     const supabase = createAdminClient()
     const { data, error } = await supabase.from('iacm_expenses').insert({
@@ -46,11 +54,21 @@ export async function POST(req: NextRequest) {
       // 'wht' (2590, Withholding Tax) had no category at all before and no
       // real historical precedent either way — added as its own real,
       // distinct account per the authoritative chart, not folded into 'tax'.
-      // communication/stationery/transport/advertising/legal/maintenance/
-      // petty_cash are UNCHANGED and still a known, separate, documented
-      // gap (several map to real account codes that mean something else
-      // entirely per the Accounts sheet) — out of scope for this fix, see
-      // docs/known-gaps.md.
+      // communication/stationery/transport/advertising/legal/maintenance are
+      // UNCHANGED and still a known, separate, documented gap (several map
+      // to real account codes that mean something else entirely per the
+      // Accounts sheet) — out of scope for this fix, see docs/known-gaps.md.
+      //
+      // 'petty_cash' REMOVED entirely, 2026-08-19: a real cash withdrawal
+      // (KUBWIMANA Devotha, 9-Jul-26, 50,000) went through this category to
+      // 6290 — a real account, but "Income tax expense" per the actual
+      // chart, not petty cash — treating a pure internal asset transfer
+      // (Bank -> Cash on Hand) as a real business expense, wrongly reducing
+      // both Net Profit and (less obviously) Total Assets, since the real
+      // 3010 side was never recorded anywhere. Moving cash between Bank and
+      // Cash on Hand is never an expense — it now has its own dedicated
+      // feature (/admin/iacm/cash-transfer/new), deliberately NOT a Record
+      // Expense category, so this mistake can't recur here.
       const EXPENSE_ACCOUNTS: Record<string, { code: string; name: string }> = {
         personnel:     { code: '6110', name: 'Salaries & Wages' },
         rent:          { code: '6210', name: 'Rent & Utilities' },
@@ -61,7 +79,6 @@ export async function POST(req: NextRequest) {
         advertising:   { code: '6250', name: 'Advertising & Marketing' },
         legal:         { code: '6260', name: 'Legal & Professional Fees' },
         maintenance:   { code: '6270', name: 'Maintenance & Repairs' },
-        petty_cash:    { code: '6290', name: 'Petty Cash / Miscellaneous' },
         paye:          { code: '2540', name: 'PAYE Payables' },
         cbhi:          { code: '2570', name: 'CBHI Payables' },
         pension:       { code: '2560', name: 'Pension and Risk Contribution Payables' },

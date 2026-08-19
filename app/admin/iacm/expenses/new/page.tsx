@@ -7,6 +7,13 @@ import { useRouter } from 'next/navigation'
 // CBHI)") silently routed all of them into the generic 2640 Tax Payable
 // account, even though Devotha's real historical bookkeeping always used
 // their own distinct codes (2540/2550/2560/2570). See docs/known-gaps.md.
+//
+// 'petty_cash' REMOVED, same date: a real cash withdrawal (Bank -> Cash on
+// Hand) went through this category to 6290 -- "Income tax expense" per the
+// real chart, not petty cash -- treating a pure internal asset transfer as
+// a real business expense. Moving cash between Bank and Cash on Hand is
+// never an expense; use "Cash Withdrawal / Transfer" in the sidebar
+// instead, a dedicated feature deliberately separate from this form.
 const CATEGORIES = [
   { value: 'personnel', label: 'Personnel Expenses (Salaries)' },
   { value: 'rent', label: 'Rent & Utilities' },
@@ -17,7 +24,6 @@ const CATEGORIES = [
   { value: 'advertising', label: 'Advertising & Marketing' },
   { value: 'legal', label: 'Legal & Professional Fees' },
   { value: 'maintenance', label: 'Maintenance & Repairs' },
-  { value: 'petty_cash', label: 'Petty Cash / Miscellaneous' },
   { value: 'paye', label: 'PAYE Payables' },
   { value: 'cbhi', label: 'CBHI Payables' },
   { value: 'pension', label: 'Pension and Risk Contribution Payables' },

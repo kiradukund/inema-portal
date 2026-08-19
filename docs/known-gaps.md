@@ -1465,3 +1465,51 @@ synthetic data: confirmed all 3 flip to `is_read=true`, the badge
 query drops from 3 to 0, a second simulated visit is a clean no-op,
 and every other field (`replied_at`, message content) stayed
 untouched.
+
+## Real bug: cash withdrawal recorded as an expense (KUBWIMANA Devotha, 9-Jul-26, 50,000)
+
+Kevin's real historical practice for moving cash from the bank into
+physical petty cash: Debit 3010 (Cash on Hand) / Credit 3020 (Bank
+Accounts) — a pure internal asset transfer, zero effect on
+expenses/profit. A real transaction (entry `6a533180-4213-4b37-af9b-
+341b3fd124e3`, ref was `expense-335d5087-...`) instead posted through
+Record Expense's `petty_cash` category — Debit 6290 / Credit 3020.
+6290 is a real account code, but per Kevin's actual chart it's
+**"Income tax expense"**, not petty cash at all — the same class of
+6220–6290 block-scrambling already documented elsewhere in this file,
+just now caught on a real live transaction, not just in a code audit.
+
+**Fixed**: journal line reclassified 6290 → 3010 (amount and the other
+leg untouched, entry still balances), the `iacm_expenses` row deleted
+outright (this was never a real expense), reference updated off the
+now-deleted expense id. Re-verified: Net Profit increased by exactly
+50,000 (the wrongly-subtracted amount) — expected. **Total Assets also
+increased by exactly 50,000 — this was NOT expected going in**, but is
+correct: a *correctly*-recorded cash withdrawal is genuinely net-zero
+on Total Assets (asset-to-asset), but comparing the wrong old state to
+the fixed new state isn't that comparison. The old 6290 debit was
+never counted in Total Assets at all (not an asset code), so the real
+cash that moved into Devotha's hands was invisible on the asset side
+this whole time — fixing it correctly adds the missing 3010 side,
+revealing Total Assets was quietly understated by this exact bug, not
+just Net Profit.
+
+**Root cause, permanent fix**: `petty_cash` removed entirely from
+Record Expense (`expenses/route.ts` and its form) — the server now
+explicitly rejects it rather than silently falling back to `other`
+(6300), which would just trade one wrong account for another; a stale
+client sending it gets a real error, not a quiet miscode. New
+dedicated feature instead: `/admin/iacm/cash-transfer/new` — Debit
+3010/Credit 3020 (withdrawal) or the reverse (deposit), posted via the
+same `postJournalEntry()` as everything else, zero expense-account
+involvement, deliberately a separate page from Record Expense so this
+specific mistake can't recur.
+
+**Full audit of every other real transaction recorded live tonight**
+(`created_by = 'iradukunda cyusa kevin'`, excluding both historical
+backfill batches): 21 entries checked individually against Kevin's
+real chart — loan disbursements (3030/3110/3020/7020/2530), payments
+(3020/3110/7010/3030), the new Shareholder Loan feature's first real
+use (3020/2030, correct), and every bank-charge/PAYE/CBHI/pension/
+maternity expense. **This 6290 entry was the only error found** — the
+other 20 all used the correct real account code.

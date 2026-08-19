@@ -1396,6 +1396,27 @@ flagged here for a real conversation with Devotha, not guessed:
   the historical backfill. If bundled, it should be split across
   several real opening-balance rows, not left as one lump 2640 figure.
 
+  **Update, 2026-08-19, building the Shareholder Loan feature**: this
+  same journal entry (`337768c3-...`) also carries a line for account
+  `2030` Shareholders' Loan — Long Term, 2,750,000 credit — same empty
+  narration, same root issue. A second, separate real entry
+  (`2919eaf2-78a3-4f90-a623-3c8f60fef45f`, dated 2026-05-18, narration
+  **"Ordinary Share Capital" — mislabeled, since it actually posts to
+  2030, not 1010**) debits 2030 by 1,250,000. Net: 2,750,000 −
+  1,250,000 = **1,500,000** — the real figure Kevin has stated
+  consistently all session. But `iacm_opening_balances` for 2030 was
+  sitting at `0/0`, not 1,500,000 — the same reconciliation gap as
+  2640, just never noticed until a real feature needed to read it.
+  **Fixed**: `iacm_opening_balances` for 2030 updated to
+  `credit_balance=1,500,000, debit_balance=0`, re-verified fresh —
+  `getAccountBalance('2030', today)` now correctly returns 1,500,000
+  (was 0). The AMOUNT is confirmed correct, by Kevin's direct
+  knowledge and by the real net of these two entries agreeing exactly.
+  What's still not clean: the audit trail behind it — the empty-
+  narration Jan-1 lump sum (shared with Item A) and the mislabeled
+  May-18 "Ordinary Share Capital" entry that actually moved 2030, not
+  1010. Real conversation with Devotha still needed for that part.
+
 - **Item B** — journal entry `9b3b1991-80fa-4d17-96c0-02bc96748ec4`,
   dated 2026-03-31, account `6300` Miscellaneous Expenses, 199,500
   debit. Narration exactly **"Expenses paid by cash"** — no further

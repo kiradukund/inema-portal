@@ -1513,3 +1513,81 @@ real chart — loan disbursements (3030/3110/3020/7020/2530), payments
 use (3020/2030, correct), and every bank-charge/PAYE/CBHI/pension/
 maternity expense. **This 6290 entry was the only error found** — the
 other 20 all used the correct real account code.
+
+## Real bug: payment allocation order was interest-first with fee gated behind full payoff (ABAYISENGA jean claude, INEMA-2026-0006)
+
+Kevin flagged a real discrepancy: ABAYISENGA's real first payment
+(73,600 RWF, ~2 months after a 500,000 disbursement) posted as 100%
+interest — Debit Bank 73,600 / Credit Interest Income 73,600 — with
+zero fee/VAT clearing and zero principal. Kevin's own real historical
+record showed it should have split fee 23,600 / interest 25,000 /
+principal 25,000.
+
+**Investigated, not assumed.** `monthsElapsed()` was confirmed correct
+(`monthsElapsed('2026-05-22','2026-07-09')` genuinely returns 1) — not
+a repeat of the Habineza `last_payment_date` bug or the Nzungize
+fee-already-cleared bug, both already fixed and unaffected here. The
+real cause was the allocation *order* itself in `payments/route.ts`:
+interest was deducted first (uncapped by anything but `interestOwed`),
+and fee/VAT was only ever charged when `isPayoff` was true — so a
+partial first payment like Abayisenga's never touched the fee at all,
+and every RWF went to interest first regardless of how small the
+payment was.
+
+**Verified against real historical evidence**, not just this one
+payment — read every real installment-payment example in Kevin's
+actual historical journal (`inema journal updated as per 2026 (1)
+until july (1).xlsx`, 576 real Journal rows). Alice's real first
+payment (loan disbursed 1,000,000, monthly interest 50,000) was only
+50,000 total, yet her real recorded split was `fee_portion=47,200` /
+`interest_portion=2,800` — genuinely short of a full month's interest.
+Under interest-first, that 50,000 would have been entirely consumed by
+interest (owed ≥ 50,000), leaving nothing for fee — the only way to
+get `interest_portion=2,800` is if fee took priority first. Indere's
+and Aline's real first payments show the identical shape, with no
+contradicting example found anywhere in the file. INEMA's real,
+consistently-observed practice: fee/VAT clears first, unconditionally,
+on every payment (not just a full payoff) until the loan's fee/VAT
+receivable is exhausted; interest next; principal last.
+
+**Process note**: Kevin's own first fix instruction described the
+corrected order backwards ("interest-first, fee-second"), directly
+contradicting the Alice evidence just gathered. Flagged the
+contradiction with Alice's exact numbers instead of building it as
+stated; Kevin confirmed the description was backwards and gave the
+corrected fee-first spec.
+
+**Fixed**, `payments/route.ts` and `payments/new/page.tsx`: allocation
+is now fee/VAT first (capped at `feeRemaining`, i.e. this loan's real
+fee+VAT owed minus `fee_portion` already cleared by prior real
+payments — the same netting the Nzungize fix already established, now
+applied as the first step instead of only under `isPayoff`), then
+interest (capped at `interestOwed`), then whatever remains reduces
+principal (capped at `outstanding`). The `isPayoff` gate is gone
+entirely — fee eligibility is decided purely by whether this loan's
+fee/VAT receivable is still outstanding, identically on every payment.
+The "can't overpay" cap (`maxOwed = outstanding + interestOwed +
+feeRemaining`) is unchanged — order-independent by construction.
+Journal line order in the auto-post was also reordered (3030 fee credit
+before 7010 interest credit before 3110 principal credit) to match,
+though this has no effect on the entry's own balance.
+
+**Tested**: 5 disposable scenarios on a throwaway client/loan
+(disbursed 1,000,000, monthly interest 50,000, fee+VAT owed 47,200) —
+(a) 20,000 (less than fee owed) → fee 20,000/interest 0/principal 0;
+(b) 47,200 (exactly the fee) → fee 47,200/interest 0/principal 0;
+(c) 77,200 (fee + partial interest) → fee 47,200/interest 30,000/
+principal 0; (d) 197,200 (fee + full interest + some principal) → fee
+47,200/interest 50,000/principal 100,000, new balance 900,000; (e)
+1,097,200 (full payoff) → fee 47,200/interest 50,000/principal
+1,000,000, new balance 0, status completed. All 5 matched expected
+splits exactly, every journal entry balanced (debit total = credit
+total), `balance_outstanding`/`status` updated correctly in each case.
+Cleanup deleted all test payments, journal lines, journal entries,
+loans, and the client; re-query confirmed zero rows remaining.
+
+**Not yet done**: Abayisenga's actual real payment record still shows
+the old wrong 100%-interest split — this fix corrects the algorithm
+going forward but does not retroactively correct that specific
+historical transaction. Follow-up, analogous to the Habineza/Nzungize/
+Bahati reversal-and-redo pattern, not yet requested.

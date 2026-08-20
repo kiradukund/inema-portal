@@ -57,11 +57,16 @@ function PaymentForm() {
         const feeRemaining = Math.max(0, feeAndVatOwed - feeAlreadyCleared)
         const maxOwed = outstanding + interestOwed + feeRemaining
         const paid = Math.min(Number(amount), maxOwed)
-        const interestPortion = Math.min(paid, interestOwed)
-        const remainderAfterInterest = paid - interestPortion
-        const isPayoff = outstanding - remainderAfterInterest <= 0
-        const feePortion = isPayoff ? Math.min(remainderAfterInterest, feeRemaining) : 0
-        const principalPortion = Math.min(outstanding, Math.max(0, remainderAfterInterest - feePortion))
+        // Real order, confirmed 2026-08-20 against real historical first
+        // payments (Alice, Indere, Aline, Bizimana): fee/VAT FIRST, then
+        // interest, then principal -- see the backend route's comment for
+        // the full evidence. Mirrors it exactly so this preview never shows
+        // a different split than what actually posts.
+        const feePortion = Math.min(paid, feeRemaining)
+        const remainderAfterFee = paid - feePortion
+        const interestPortion = Math.min(remainderAfterFee, interestOwed)
+        const remainderAfterInterest = remainderAfterFee - interestPortion
+        const principalPortion = Math.min(outstanding, remainderAfterInterest)
         const overpaidAndCapped = Number(amount) > maxOwed
         setPreview({
           outstanding, months, isOverrideActive, lastActivityDate: lastActivityDate.toISOString().split('T')[0],
@@ -153,10 +158,14 @@ function PaymentForm() {
             <div className="space-y-1">
               <div className="flex justify-between"><span className="text-slate-600">Months of interest charged</span><span className="font-semibold">{preview.months} month{preview.months === 1 ? '' : 's'} {preview.isOverrideActive ? '(manual override)' : `(auto-calculated, since ${preview.lastActivityDate})`}</span></div>
               <div className="flex justify-between"><span className="text-slate-600">Interest owed for that period</span><span className="font-semibold">RWF {preview.interestOwed.toLocaleString()}</span></div>
-              <div className="flex justify-between"><span className="text-slate-600">Interest portion</span><span className="font-semibold">RWF {preview.interestPortion.toLocaleString()}</span></div>
+              {/* Real order, confirmed 2026-08-20 against real historical
+                  first payments: fee/VAT clears FIRST, then interest, then
+                  principal -- shown in that order so it matches what
+                  actually posts, not the old (wrong) interest-first order. */}
               {preview.feePortion > 0 && (
-                <div className="flex justify-between"><span className="text-slate-600">Fee/VAT clearing (payoff)</span><span className="font-semibold">RWF {preview.feePortion.toLocaleString()}</span></div>
+                <div className="flex justify-between"><span className="text-slate-600">Fee/VAT clearing</span><span className="font-semibold">RWF {preview.feePortion.toLocaleString()}</span></div>
               )}
+              <div className="flex justify-between"><span className="text-slate-600">Interest portion</span><span className="font-semibold">RWF {preview.interestPortion.toLocaleString()}</span></div>
               <div className="flex justify-between"><span className="text-slate-600">Principal portion</span><span className="font-semibold">RWF {preview.principalPortion.toLocaleString()}</span></div>
               <div className="flex justify-between border-t border-green-200 pt-1 mt-1"><span className="font-semibold text-green-800">New outstanding balance</span><span className="font-bold text-green-800">RWF {preview.newBalance.toLocaleString()}</span></div>
             </div>

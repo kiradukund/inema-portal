@@ -22,11 +22,28 @@ export async function POST(req: NextRequest) {
     const outstanding = Number(loan.balance_outstanding)
     const disbursed = Number(loan.disbursed_amount)
 
-    // Payment allocation: interest first (for every elapsed month since the
-    // last REAL payment, or since disbursement if none exist -- not just
-    // one month flat), then the fee+VAT receivable set up at disbursement
-    // gets cleared once the loan is fully paid off, then whatever's left
-    // reduces principal.
+    // Payment allocation, real order confirmed 2026-08-20 against ~15
+    // independent real historical first-payment examples (Alice, Indere,
+    // Aline, Bizimana, and others in "inema journal updated as per 2026 (1)
+    // until july (1).xlsx"): fee/VAT receivable FIRST, then interest owed
+    // for the elapsed period, then whatever remains reduces principal.
+    // This was previously interest-first with fee gated behind a full
+    // payoff -- backwards on both counts. Real evidence: Alice's real
+    // first payment (loan disbursed 1,000,000, monthly interest 50,000)
+    // was only 50,000 total, yet recorded fee_portion=47,200 and
+    // interest_portion=2,800 -- genuinely short of a full month's
+    // interest. Under interest-first that 50,000 payment would have been
+    // entirely consumed by interest (owed >= 50,000), leaving nothing for
+    // fee; the only way to get interest_portion=2,800 is if fee took
+    // priority first. Indere's and Aline's real first payments show the
+    // identical shape. Confirmed real consequence of the old order:
+    // ABAYISENGA jean claude's real 73,600 first payment (INEMA-2026-0006)
+    // recorded 100% interest with zero fee clearing and zero principal --
+    // under this corrected order it produces fee=23,600 / interest=25,000
+    // / principal=25,000, matching the real month-1 interest owed exactly.
+    // Fee is no longer gated by "is this a full payoff" -- it's gated by
+    // "has this loan's fee/VAT already been cleared", checked the same way
+    // for every payment, not just the last one.
     //
     // The reference date comes from iacm_payments directly, NOT
     // iacm_loans.last_payment_date -- confirmed real incident (HABINEZA
@@ -54,33 +71,34 @@ export async function POST(req: NextRequest) {
     const feeAndVatOwed = disbursed * UPFRONT_FEE_RATE * (1 + VAT_RATE)
 
     // Real bug found 2026-08-18 (NZUNGIZE Emmanuel, INEMA-2026-0010): this
-    // used to assume the full original fee+VAT was always still owed on any
-    // payoff, even when an earlier REAL payment on this loan had already
-    // cleared it (his first payment, 2026-03-13, fee_portion=94,400 -- no
-    // receivable left). That produced a phantom "still owing" fee, blocked
-    // the loan from actually closing on a payment that genuinely covered
-    // the real balance in full, and would have posted a duplicate
-    // fee-clearing journal credit against an AR balance already at zero in
-    // the real ledger. Net against this loan's own cumulative fee_portion
-    // already paid -- zero for a genuine first-ever payoff (Habineza's
-    // case, unaffected by this change), the real remainder otherwise.
+    // used to assume the full original fee+VAT was always still owed,
+    // even when an earlier REAL payment on this loan had already cleared
+    // it (his first payment, 2026-03-13, fee_portion=94,400 -- no
+    // receivable left). That produced a phantom "still owing" fee. Net
+    // against this loan's own cumulative fee_portion already paid -- the
+    // full amount for a genuine first-ever payment, the real remainder
+    // (often zero) on every payment after that.
     const feeAlreadyCleared = (priorPayments ?? []).reduce((s, p: any) => s + Number(p.fee_portion ?? 0), 0)
     const feeRemaining = Math.max(0, feeAndVatOwed - feeAlreadyCleared)
 
     // "Can't overpay" needs to cap against everything that can actually be
-    // owed on a full payoff (principal + accrued interest + any unpaid
-    // fee/VAT) -- capping against `outstanding` (principal-only) alone
-    // silently discarded the interest/fee portion of a real payoff payment,
-    // exactly the kind of transaction the BIZIMANA/STELLA examples are.
+    // owed in total (principal + accrued interest + any unpaid fee/VAT) --
+    // capping against `outstanding` (principal-only) alone silently
+    // discarded the interest/fee portion of a real payoff payment, exactly
+    // the kind of transaction the BIZIMANA/STELLA examples are.
     const maxOwed = outstanding + interestOwed + feeRemaining
     const paid = Math.min(total_amount, maxOwed)
 
-    const interestPortion = Math.min(paid, interestOwed)
-    const remainderAfterInterest = paid - interestPortion
+    // Fee first (real evidence above), then interest, then whatever's left
+    // reduces principal -- each step capped at what's actually owed, and
+    // each only ever sees the remainder after the step(s) before it.
+    const feePortion = Math.min(paid, feeRemaining)
+    const remainderAfterFee = paid - feePortion
 
-    const isPayoff = outstanding - remainderAfterInterest <= 0
-    const feePortion = isPayoff ? Math.min(remainderAfterInterest, feeRemaining) : 0
-    const principalPortion = Math.min(outstanding, Math.max(0, remainderAfterInterest - feePortion))
+    const interestPortion = Math.min(remainderAfterFee, interestOwed)
+    const remainderAfterInterest = remainderAfterFee - interestPortion
+
+    const principalPortion = Math.min(outstanding, remainderAfterInterest)
 
     const newBalance = Math.max(0, outstanding - principalPortion)
     const newPrincipalRepaid = Number(loan.principal_repaid ?? 0) + principalPortion
@@ -143,21 +161,21 @@ export async function POST(req: NextRequest) {
         const lines: JournalLineInput[] = [
           { account_code: cashAccount.code, account_name: cashAccount.name, debit: paid },
         ]
-        if (principalPortion > 0) {
-          lines.push({ account_code: '3110', account_name: 'Loan Issued', credit: principalPortion })
-        }
-        if (interestPortion > 0) {
-          lines.push({ account_code: '7010', account_name: 'Interest Income on Loans', credit: interestPortion })
-        }
         if (feePortion > 0) {
-          // Clears the receivable set up at disbursement (Piece 1: fee + VAT
-          // are booked as revenue immediately when the loan is issued, into
+          // Clears the receivable set up at disbursement (fee + VAT are
+          // booked as revenue immediately when the loan is issued, into
           // 3030). This repayment is just cash arriving for an already-
           // recognized fee, not new income -- crediting 7020 again here
           // would double-count it. Matches the real historical pattern
           // exactly (e.g. Nzungize's actual repayment credits AR, not Fee
           // Income a second time).
           lines.push({ account_code: '3030', account_name: 'Accounts Receivable — Interest and Fees', credit: feePortion })
+        }
+        if (interestPortion > 0) {
+          lines.push({ account_code: '7010', account_name: 'Interest Income on Loans', credit: interestPortion })
+        }
+        if (principalPortion > 0) {
+          lines.push({ account_code: '3110', account_name: 'Loan Issued', credit: principalPortion })
         }
         const { error: journalErr } = await postJournalEntry(supabase, {
           entry_date: payment_date, narration, reference, entry_type: 'payment',

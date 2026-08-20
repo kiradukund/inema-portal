@@ -1,7 +1,7 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
 import { getAccountBalance, getAccountMovementSum } from '@/lib/ledger'
-import { NET_PROFIT_CUTOFF, NET_PROFIT_BASE_AS_OF_CUTOFF } from '@/lib/net-profit'
+import { NET_PROFIT_CUTOFF, NET_PROFIT_BASE_AS_OF_CUTOFF, LIABILITY_EXPENSE_CATEGORIES } from '@/lib/net-profit'
 import Link from 'next/link'
 import { MonthlyCollectionsChart, LoanPortfolioDonut } from './DashboardCharts'
 
@@ -53,7 +53,7 @@ export default async function AdminDashboard() {
     supabase.from('iacm_loans').select('*, iacm_clients(full_name, phone, gender)').order('created_at', { ascending: false }),
     supabase.from('iacm_clients').select('id, phone, full_name'),
     supabase.from('iacm_payments').select('total_amount, interest_portion, payment_date'),
-    supabase.from('iacm_expenses').select('amount, expense_date'),
+    supabase.from('iacm_expenses').select('amount, expense_date, category'),
     supabase.from('loan_applications').select('*').eq('status', 'submitted').order('submitted_at', { ascending: false }),
   ])
 
@@ -108,8 +108,13 @@ export default async function AdminDashboard() {
   const dayAfterCutoff = new Date(new Date(`${NET_PROFIT_CUTOFF}T00:00:00`).getTime() + 86400000)
   const feeIncome = await getAccountMovementSum(['7020'], dayAfterCutoff, today, 'credit')
 
+  // Real gap confirmed 2026-08-20: this used to sum every expense
+  // unconditionally, including PAYE/CBHI/Pension/Maternity/WHT/Tax-Payable
+  // categories -- those settle a real 2xxx liability, not a 6xxx operating
+  // cost, and shouldn't reduce Net Profit. See lib/net-profit.ts and
+  // docs/known-gaps.md.
   const totalExpenses = allIacmExpenses
-    .filter(e => (e.expense_date ?? '') > NET_PROFIT_CUTOFF)
+    .filter(e => (e.expense_date ?? '') > NET_PROFIT_CUTOFF && !LIABILITY_EXPENSE_CATEGORIES.includes((e as any).category))
     .reduce((s, e) => s + Number(e.amount ?? 0), 0)
 
   const netProfit = NET_PROFIT_BASE_AS_OF_CUTOFF + grossIncome + feeIncome - totalExpenses

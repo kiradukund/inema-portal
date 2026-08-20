@@ -14,23 +14,35 @@ import { useRouter } from 'next/navigation'
 // a real business expense. Moving cash between Bank and Cash on Hand is
 // never an expense; use "Cash Withdrawal / Transfer" in the sidebar
 // instead, a dedicated feature deliberately separate from this form.
+//
+// Full re-check against the real chart, 2026-08-20: the 6220-6270 block was
+// scrambled (communication/stationery/transport/advertising/legal/
+// maintenance each pointed at a code that really means something else).
+// Fixed to match the real chart exactly; 'stationery'/'advertising'/
+// 'maintenance' removed (no match anywhere in the given chart, zero real
+// usage) -- see docs/known-gaps.md for the full table and reasoning. 6290
+// "Income tax expense" is real and distinct from 2640 "Tax Payable" (an
+// accrued liability vs. the actual expense) -- both now have their own
+// category.
 const CATEGORIES = [
-  { value: 'personnel', label: 'Personnel Expenses (Salaries)' },
-  { value: 'rent', label: 'Rent & Utilities' },
-  { value: 'bank_charges', label: 'Bank Charges & Commissions' },
-  { value: 'communication', label: 'Communication & Internet' },
-  { value: 'stationery', label: 'Office Stationery & Supplies' },
-  { value: 'transport', label: 'Transport & Travel' },
-  { value: 'advertising', label: 'Advertising & Marketing' },
+  { value: 'interest_on_borrowings', label: 'Interest on Borrowings' },
+  { value: 'personnel', label: 'Salaries & Wages' },
+  { value: 'staff_benefits', label: 'Staff Benefits & Welfare' },
+  { value: 'rent', label: 'Office Rent' },
+  { value: 'utilities', label: 'Utilities' },
+  { value: 'it_software', label: 'IT & Software Expenses' },
   { value: 'legal', label: 'Legal & Professional Fees' },
-  { value: 'maintenance', label: 'Maintenance & Repairs' },
+  { value: 'transport', label: 'Travel & Transport' },
+  { value: 'communication', label: 'Communication Expenses' },
+  { value: 'bank_charges', label: 'Bank Charges & Commissions' },
+  { value: 'income_tax_expense', label: 'Income Tax Expense' },
   { value: 'paye', label: 'PAYE Payables' },
   { value: 'cbhi', label: 'CBHI Payables' },
   { value: 'pension', label: 'Pension and Risk Contribution Payables' },
   { value: 'maternity', label: 'Maternity Contribution Payables' },
   { value: 'wht', label: 'Withholding Tax (WHT) Payables' },
-  { value: 'tax', label: 'Corporate Income Tax' },
-  { value: 'depreciation', label: 'Depreciation' },
+  { value: 'tax', label: 'Corporate Income Tax (Payable)' },
+  { value: 'depreciation', label: 'Depreciation & Amortization' },
   { value: 'other', label: 'Other Operating Expenses' },
 ]
 

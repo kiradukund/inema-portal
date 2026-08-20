@@ -1692,3 +1692,53 @@ succeeded with it; every reversal produced a complete, correct
 `iacm_reversals` audit row. 30 checks, 0 failures. Cleanup confirmed
 zero residue across all 7 affected tables and Net Profit back to the
 exact pre-test baseline.
+
+## Full Record Expense re-check against the real chart, plus a confirmed Net Profit gap
+
+Kevin asked for a complete, final check of every expense-relevant
+account against his real 72-account chart — not just the PAYE/CBHI/
+Pension/Maternity/WHT fix from 2026-08-19. Direct comparison, one
+account at a time, found the 6220–6270 block was genuinely scrambled
+(previously flagged as a known, out-of-scope gap — now resolved):
+
+| Code | Real name | Was | Now |
+|---|---|---|---|
+| 6010 | Interest on Borrowings | missing | added (`interest_on_borrowings`) |
+| 6120 | Staff Benefits & Welfare | missing | added (`staff_benefits`) |
+| 6210 | Office Rent | `rent`, labeled "Rent & Utilities" | relabeled "Office Rent" (code unchanged) |
+| 6220 | Utilities | code squatted by `communication` | added as its own category (`utilities`) |
+| 6230 | IT & Software Expenses | code squatted by `stationery` | added (`it_software`) |
+| 6240 | Depreciation & Amortization | code squatted by `transport`; `depreciation` category posted to 6310 instead | `transport` moved off; `depreciation` recoded to 6240 |
+| 6250 | Legal & Professional Fees | code squatted by `advertising` | `legal` moved here (was wrongly on 6260) |
+| 6260 | Travel & Transport | code squatted by `legal` | `transport` moved here (was wrongly on 6240) |
+| 6270 | Communication Expenses | code squatted by `maintenance` | `communication` moved here (was wrongly on 6220) |
+| 6290 | Income tax expense | missing (was `petty_cash`'s wrong target, removed 2026-08-19) | added (`income_tax_expense`), distinct from 2640 Tax Payable |
+
+`advertising`, `stationery`, and `maintenance` are **removed** — none
+had a match anywhere in Kevin's real chart, and none had any real
+historical usage (checked live data before removing: zero rows in any
+of the three). They were squatting on the correct codes for
+communication/legal/transport, which do have real matches, so removing
+them was what unblocked the fix. If any of the three turn out to be
+real, distinct accounts elsewhere in the full 72, they can be
+re-added with their real code once confirmed. Same reasoning for
+recoding `depreciation` from 6310 (not a real account anywhere in the
+given chart) to 6240 — zero real usage, so safe to correct outright
+rather than leave wrong.
+
+**Separately confirmed, materially wrong on live data**: both Net
+Profit calculations (`app/admin/page.tsx`, `app/admin/income/page.tsx`)
+summed every `iacm_expenses` row unconditionally — no exclusion for
+the liability categories (paye/cbhi/pension/maternity/wht/tax), which
+settle a real 2xxx payable, not a 6xxx operating cost. Checked real
+data: 4 real post-cutoff liability payments already existed (maternity
+3,000, PAYE 114,000, pension 70,000, CBHI 1,773 — all 2026-07-08),
+totaling 188,773 RWF wrongly subtracted from the live-reported Net
+Profit. Fixed via a new shared `LIABILITY_EXPENSE_CATEGORIES` export in
+`lib/net-profit.ts`, applied to both pages' Net Profit calculation only
+— deliberately NOT applied to the "Total Expenses" KPI card or the
+category-breakdown chart on the Income page, which track total real
+cash outflow regardless of account type, a different, legitimate
+purpose. Verified against real live data: Net Profit moved by exactly
++188,773 (6,956,191.4 → 7,144,964.4) after the fix, matching the exact
+amount of the 4 real liability payments.

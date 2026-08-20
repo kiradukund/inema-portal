@@ -69,16 +69,32 @@ export async function POST(req: NextRequest) {
       // Cash on Hand is never an expense — it now has its own dedicated
       // feature (/admin/iacm/cash-transfer/new), deliberately NOT a Record
       // Expense category, so this mistake can't recur here.
+      // Real chart cross-checked again 2026-08-20 against Kevin's full 72-
+      // account chart (12 named 6xxx expense accounts, checked one by one):
+      // the 6220-6270 block was scrambled (communication/stationery/
+      // transport/advertising/legal/maintenance each pointed at a code that
+      // really means something else) -- see docs/known-gaps.md for the full
+      // before/after table. 'stationery', 'advertising', and 'maintenance'
+      // are REMOVED here: none has a match anywhere in the real chart given
+      // tonight, and none had any real historical usage (checked live data
+      // first) -- they were squatting on the correct codes for communication/
+      // legal/transport, which DO have real matches. Falls back to 'other'
+      // (6300) if a real expense doesn't fit a named category, same as
+      // before. If any of the three removed categories turn out to be real,
+      // distinct accounts elsewhere in the full chart, they can be re-added
+      // with their real code once confirmed -- not guessed here.
       const EXPENSE_ACCOUNTS: Record<string, { code: string; name: string }> = {
+        interest_on_borrowings: { code: '6010', name: 'Interest on Borrowings' },
         personnel:     { code: '6110', name: 'Salaries & Wages' },
-        rent:          { code: '6210', name: 'Rent & Utilities' },
+        staff_benefits: { code: '6120', name: 'Staff Benefits & Welfare' },
+        rent:          { code: '6210', name: 'Office Rent' },
+        utilities:     { code: '6220', name: 'Utilities' },
+        it_software:   { code: '6230', name: 'IT & Software Expenses' },
+        legal:         { code: '6250', name: 'Legal & Professional Fees' },
+        transport:     { code: '6260', name: 'Travel & Transport' },
+        communication: { code: '6270', name: 'Communication Expenses' },
         bank_charges:  { code: '6280', name: 'Bank Charges & Commissions' },
-        communication: { code: '6220', name: 'Communication & Internet' },
-        stationery:    { code: '6230', name: 'Office Stationery & Supplies' },
-        transport:     { code: '6240', name: 'Transport & Travel' },
-        advertising:   { code: '6250', name: 'Advertising & Marketing' },
-        legal:         { code: '6260', name: 'Legal & Professional Fees' },
-        maintenance:   { code: '6270', name: 'Maintenance & Repairs' },
+        income_tax_expense: { code: '6290', name: 'Income tax expense' },
         paye:          { code: '2540', name: 'PAYE Payables' },
         cbhi:          { code: '2570', name: 'CBHI Payables' },
         pension:       { code: '2560', name: 'Pension and Risk Contribution Payables' },
@@ -93,9 +109,12 @@ export async function POST(req: NextRequest) {
 
       if (category === 'depreciation') {
         // Non-cash adjusting entry — reduces the carrying value of fixed
-        // assets, never touches cash/bank.
+        // assets, never touches cash/bank. Code corrected 2026-08-20:
+        // 6240 "Depreciation & Amortization" per the real chart, not 6310
+        // (not a real account anywhere in the given chart) -- zero real
+        // historical usage of this category, so safe to correct outright.
         lines = [
-          { account_code: '6310', account_name: 'Depreciation Expense', debit: amountNum },
+          { account_code: '6240', account_name: 'Depreciation & Amortization', debit: amountNum },
           { account_code: '3220', account_name: 'Accumulated Depreciation', credit: amountNum },
         ]
       } else {

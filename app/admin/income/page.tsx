@@ -1,23 +1,34 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { getAccountMovementSum } from '@/lib/ledger'
-import { NET_PROFIT_CUTOFF, NET_PROFIT_BASE_AS_OF_CUTOFF } from '@/lib/net-profit'
+import { NET_PROFIT_CUTOFF, NET_PROFIT_BASE_AS_OF_CUTOFF, LIABILITY_EXPENSE_CATEGORIES } from '@/lib/net-profit'
 
 const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
+// Kept in sync with app/api/admin/iacm/expenses/route.ts's EXPENSE_ACCOUNTS
+// and app/admin/iacm/expenses/new/page.tsx's CATEGORIES -- stale here until
+// 2026-08-20 (still had 'petty_cash', a generic 'tax' label, no per-account
+// PAYE/CBHI/Pension/Maternity/WHT entries) even after those were fixed
+// elsewhere earlier the same night. See docs/known-gaps.md.
 const CATEGORY_LABELS: Record<string, string> = {
-  personnel: 'Personnel Expenses (Salaries, PAYE, RSSB)',
-  rent: 'Rent & Utilities',
-  bank_charges: 'Bank Charges & Commissions',
-  communication: 'Communication & Internet',
-  stationery: 'Office Stationery & Supplies',
-  transport: 'Transport & Travel',
-  advertising: 'Advertising & Marketing',
+  interest_on_borrowings: 'Interest on Borrowings',
+  personnel: 'Salaries & Wages',
+  staff_benefits: 'Staff Benefits & Welfare',
+  rent: 'Office Rent',
+  utilities: 'Utilities',
+  it_software: 'IT & Software Expenses',
   legal: 'Legal & Professional Fees',
-  maintenance: 'Maintenance & Repairs',
-  petty_cash: 'Petty Cash / Miscellaneous',
-  tax: 'Tax Payments (PAYE, RSSB, CBHI)',
-  depreciation: 'Depreciation',
+  transport: 'Travel & Transport',
+  communication: 'Communication Expenses',
+  bank_charges: 'Bank Charges & Commissions',
+  income_tax_expense: 'Income Tax Expense',
+  paye: 'PAYE Payables',
+  cbhi: 'CBHI Payables',
+  pension: 'Pension and Risk Contribution Payables',
+  maternity: 'Maternity Contribution Payables',
+  wht: 'Withholding Tax (WHT) Payables',
+  tax: 'Corporate Income Tax (Payable)',
+  depreciation: 'Depreciation & Amortization',
   other: 'Other Operating Expenses',
 }
 
@@ -82,8 +93,15 @@ export default async function AdminIncome() {
   const dayAfterCutoff = new Date(new Date(`${NET_PROFIT_CUTOFF}T00:00:00`).getTime() + 86400000)
   const postCutoffFeeIncome = await getAccountMovementSum(['7020'], dayAfterCutoff, today, 'credit')
 
+  // Real gap confirmed 2026-08-20, same as app/admin/page.tsx: liability-
+  // category expenses (PAYE/CBHI/Pension/Maternity/WHT/Tax Payable) settle
+  // a real 2xxx payable, not a 6xxx operating cost, and shouldn't reduce
+  // Net Profit. Deliberately NOT applied to totalExpenses/expensesByMonth
+  // above (the "Total Expenses" KPI card and category breakdown chart) --
+  // those track real cash outflow regardless of account type, which is a
+  // different, legitimate purpose from Net Profit specifically.
   const postCutoffExpenses = allExpenses
-    .filter(e => (e.expense_date ?? '') > NET_PROFIT_CUTOFF)
+    .filter(e => (e.expense_date ?? '') > NET_PROFIT_CUTOFF && !LIABILITY_EXPENSE_CATEGORIES.includes((e as any).category))
     .reduce((s, e) => s + Number(e.amount ?? 0), 0)
   const netProfit = NET_PROFIT_BASE_AS_OF_CUTOFF + postCutoffInterest + postCutoffFeeIncome - postCutoffExpenses
   const totalDisbursed = allIacmLoans.reduce((s, l) => s + Number(l.disbursed_amount ?? 0), 0)

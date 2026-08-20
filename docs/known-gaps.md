@@ -1742,3 +1742,31 @@ cash outflow regardless of account type, a different, legitimate
 purpose. Verified against real live data: Net Profit moved by exactly
 +188,773 (6,956,191.4 → 7,144,964.4) after the fix, matching the exact
 amount of the 4 real liability payments.
+
+## VAT Control Account and the rest of the 2500-series payables
+
+Same night, immediate follow-up: Kevin confirmed he needs to record a
+real VAT payment and found 2530 "VAT Control Account" wasn't
+selectable on Record Expense at all — same class of gap as the
+PAYE/CBHI/Pension/Maternity fix above, just missed at the time. Checked
+the rest of the 2500-series liability payables Kevin named: 2590 WHT
+already present and correct; 2600 Social Security Payables and 2620
+Other Statutory Payables both genuinely missing too. 2640 Tax Payable
+re-confirmed still scoped only to Corporate Income Tax, not conflated
+with any of these.
+
+**Fixed**: added `vat` (2530), `social_security` (2600), and
+`other_statutory` (2620) to `EXPENSE_ACCOUNTS`
+(`app/api/admin/iacm/expenses/route.ts`), the Record Expense dropdown,
+and `CATEGORY_LABELS` (`app/admin/income/page.tsx`) — same
+liability-settlement pattern as PAYE/CBHI/Pension/Maternity. All three
+added to `LIABILITY_EXPENSE_CATEGORIES` (`lib/net-profit.ts`) so they
+follow the exact same Net Profit exclusion.
+
+**Tested**: confirmed zero real expense rows used any of the three new
+categories before adding them (no migration risk). Recorded a real
+disposable 60,000 VAT payment: the real VAT Control Account balance
+(already a genuine nonzero 77,712 from disbursement VAT bookings)
+correctly moved to 17,712 — a clean 60,000 decrease — while Net Profit
+stayed exactly unchanged (6,407,464.4 before and after). Cleanup
+confirmed both reverted exactly and the test rows were gone.

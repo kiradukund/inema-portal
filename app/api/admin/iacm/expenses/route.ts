@@ -83,6 +83,16 @@ export async function POST(req: NextRequest) {
       // before. If any of the three removed categories turn out to be real,
       // distinct accounts elsewhere in the full chart, they can be re-added
       // with their real code once confirmed -- not guessed here.
+      //
+      // 2500-series liability payables extended 2026-08-20: VAT Control
+      // Account (2530) was confirmed missing entirely -- same pattern as
+      // PAYE/CBHI/Pension/Maternity, a liability settlement, not a real
+      // expense. Social Security (2600) and Other Statutory (2620) added
+      // the same way, per Kevin's real chart. Every liability category
+      // here (vat/paye/cbhi/pension/maternity/wht/social_security/
+      // other_statutory/tax) is excluded from Net Profit -- see
+      // lib/net-profit.ts's LIABILITY_EXPENSE_CATEGORIES, kept in sync
+      // with this map.
       const EXPENSE_ACCOUNTS: Record<string, { code: string; name: string }> = {
         interest_on_borrowings: { code: '6010', name: 'Interest on Borrowings' },
         personnel:     { code: '6110', name: 'Salaries & Wages' },
@@ -95,11 +105,14 @@ export async function POST(req: NextRequest) {
         communication: { code: '6270', name: 'Communication Expenses' },
         bank_charges:  { code: '6280', name: 'Bank Charges & Commissions' },
         income_tax_expense: { code: '6290', name: 'Income tax expense' },
+        vat:           { code: '2530', name: 'VAT Control Account' },
         paye:          { code: '2540', name: 'PAYE Payables' },
         cbhi:          { code: '2570', name: 'CBHI Payables' },
         pension:       { code: '2560', name: 'Pension and Risk Contribution Payables' },
         maternity:     { code: '2550', name: 'Maternity Contribution Payables' },
         wht:           { code: '2590', name: 'Withholding Tax (WHT) Payables' },
+        social_security: { code: '2600', name: 'Social Security Payables' },
+        other_statutory: { code: '2620', name: 'Other Statutory Payables' },
         tax:           { code: '2640', name: 'Tax Payable' },
         other:         { code: '6300', name: 'Miscellaneous Expenses' },
       }

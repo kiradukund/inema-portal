@@ -24,6 +24,11 @@ import { useRouter } from 'next/navigation'
 // "Income tax expense" is real and distinct from 2640 "Tax Payable" (an
 // accrued liability vs. the actual expense) -- both now have their own
 // category.
+//
+// 2500-series liability payables extended 2026-08-20: VAT Control Account
+// (2530) confirmed missing entirely, added the same way as PAYE/CBHI/
+// Pension/Maternity -- a liability settlement, not a real expense. Social
+// Security (2600) and Other Statutory (2620) added the same way.
 const CATEGORIES = [
   { value: 'interest_on_borrowings', label: 'Interest on Borrowings' },
   { value: 'personnel', label: 'Salaries & Wages' },
@@ -36,11 +41,14 @@ const CATEGORIES = [
   { value: 'communication', label: 'Communication Expenses' },
   { value: 'bank_charges', label: 'Bank Charges & Commissions' },
   { value: 'income_tax_expense', label: 'Income Tax Expense' },
+  { value: 'vat', label: 'VAT Payment (Control Account)' },
   { value: 'paye', label: 'PAYE Payables' },
   { value: 'cbhi', label: 'CBHI Payables' },
   { value: 'pension', label: 'Pension and Risk Contribution Payables' },
   { value: 'maternity', label: 'Maternity Contribution Payables' },
   { value: 'wht', label: 'Withholding Tax (WHT) Payables' },
+  { value: 'social_security', label: 'Social Security Payables' },
+  { value: 'other_statutory', label: 'Other Statutory Payables' },
   { value: 'tax', label: 'Corporate Income Tax (Payable)' },
   { value: 'depreciation', label: 'Depreciation & Amortization' },
   { value: 'other', label: 'Other Operating Expenses' },

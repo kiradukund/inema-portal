@@ -11,10 +11,14 @@ export const NET_PROFIT_BASE_AS_OF_CUTOFF = 5018004.4
 // Real gap confirmed 2026-08-20: both Net Profit calculations (this page's
 // callers) summed EVERY iacm_expenses row unconditionally, with no
 // exclusion for these categories -- even though each one settles a real
-// 2xxx liability (PAYE/CBHI/Pension/Maternity/WHT/Corporate Income Tax
-// Payable), not a 6xxx operating expense. Paying down a payable isn't a new
-// cost hitting the P&L; only the six 6xxx-mapped categories should reduce
-// Net Profit. Confirmed materially wrong on real live data at the time of
-// the fix: 4 real post-cutoff liability payments (188,773 RWF total) were
-// being wrongly subtracted. See docs/known-gaps.md.
-export const LIABILITY_EXPENSE_CATEGORIES = ['paye', 'cbhi', 'pension', 'maternity', 'wht', 'tax']
+// 2xxx liability (VAT/PAYE/CBHI/Pension/Maternity/WHT/Social Security/Other
+// Statutory/Corporate Income Tax Payable), not a 6xxx operating expense.
+// Paying down a payable isn't a new cost hitting the P&L; only the 6xxx-
+// mapped categories should reduce Net Profit. Confirmed materially wrong on
+// real live data at the time of the original fix: 4 real post-cutoff
+// liability payments (188,773 RWF total) were being wrongly subtracted.
+// Extended same night with vat/social_security/other_statutory once those
+// categories were added to Record Expense -- same treatment, kept in sync
+// with EXPENSE_ACCOUNTS in app/api/admin/iacm/expenses/route.ts. See
+// docs/known-gaps.md.
+export const LIABILITY_EXPENSE_CATEGORIES = ['vat', 'paye', 'cbhi', 'pension', 'maternity', 'wht', 'social_security', 'other_statutory', 'tax']

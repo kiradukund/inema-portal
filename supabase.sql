@@ -650,3 +650,40 @@ create table if not exists iacm_payment_proofs (
   created_at timestamptz default now()
 );
 alter table iacm_payment_proofs disable row level security;
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- REVERSE TRANSACTION FEATURE — Run this in Supabase SQL Editor
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Permanent audit trail for the Reverse Transaction feature
+-- (lib/ledger.ts's reverseTransaction(), app/api/admin/iacm/reversals).
+-- Generalizes the by-hand recipe used to reverse several real mistaken
+-- entries (delete journal lines, delete the journal entry, delete/recompute
+-- the domain row) into an in-app, audited action any admin can trigger.
+-- `snapshot` is jsonb (not per-type columns) because what's undone genuinely
+-- differs by type — a loan row, a payment row, or nothing at all for the
+-- two journal-only transaction types (shareholder_loan, cash_transfer) —
+-- and this table exists to be read by a human recovering from a mistaken
+-- reversal, not joined for reporting. `original_journal_entry_id` is a
+-- pointer only, not a live FK, since the referenced row is deleted in the
+-- same operation that writes this audit row. Access control matches the
+-- other iacm_* tables: RLS on, admin-only policy — every route already
+-- goes through requireAdminApi() plus the service-role client either way.
+create table if not exists iacm_reversals (
+  id                         uuid primary key default uuid_generate_v4(),
+  entry_type                 text not null,
+  original_journal_entry_id  uuid not null,
+  original_reference         text not null,
+  original_entry_date        date not null,
+  original_created_by        text,
+  domain_table                text,
+  domain_row_id                uuid,
+  snapshot                   jsonb not null,
+  reason                     text not null,
+  reversed_by_user_id        uuid references profiles(id),
+  reversed_by_name           text not null,
+  reversed_at                 timestamptz not null default now()
+);
+alter table iacm_reversals enable row level security;
+create policy "admin_only_iacm_reversals" on iacm_reversals
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create index if not exists idx_iacm_reversals_original_journal_entry_id on iacm_reversals(original_journal_entry_id);

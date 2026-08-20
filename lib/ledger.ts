@@ -201,6 +201,170 @@ export async function getAccountMovementSum(
   return side === 'debit' ? debit - credit : credit - debit
 }
 
+// Reverse Transaction feature (2026-08-20): generalizes the by-hand
+// recipe used to reverse three real mistaken entries earlier tonight
+// (delete journal lines, delete the journal entry, delete/recompute the
+// domain row) into one reusable, audited path any admin can trigger
+// in-app instead of a temporary service-role DB session.
+//
+// Maps each reversible entry_type to its backing domain table (null for
+// the two journal-only types) and the `reference` prefix used to recover
+// the domain row's id (e.g. reference = "payment-<uuid>"). 'manual'
+// entries are deliberately not in this map -- out of scope.
+export const REVERSAL_HANDLERS: Record<string, { domainTable: string | null; referencePrefix: string }> = {
+  disbursement:     { domainTable: 'iacm_loans',    referencePrefix: 'loan-' },
+  payment:          { domainTable: 'iacm_payments', referencePrefix: 'payment-' },
+  expense:          { domainTable: 'iacm_expenses', referencePrefix: 'expense-' },
+  shareholder_loan: { domainTable: null,            referencePrefix: 'shareholder-loan-' },
+  cash_transfer:    { domainTable: null,            referencePrefix: 'cash-transfer-' },
+}
+
+export interface ReverseTransactionParams {
+  journal_entry_id: string
+  reason: string
+  acknowledged_pre_cutoff: boolean
+  reversed_by_user_id: string
+  reversed_by_name: string
+}
+
+export interface ReverseTransactionResult {
+  error: string | null
+  reversal_id?: string
+}
+
+// Writes the iacm_reversals audit row BEFORE touching any domain/journal
+// data, not after. This is a deliberate departure from the strict
+// "commit only when fully done" ideal (which would need a real Postgres
+// transaction/RPC function this project's tables aren't set up for): if
+// a later step in this function fails partway, the worse outcome by far
+// is a silent, unaudited deletion of real financial data -- a leftover
+// audit row describing a reversal that didn't fully complete is a much
+// safer failure mode, and is left in place on purpose for manual review
+// rather than rolled back.
+export async function reverseTransaction(
+  supabase: ReturnType<typeof createAdminClient>,
+  params: ReverseTransactionParams
+): Promise<ReverseTransactionResult> {
+  const { journal_entry_id, reason, acknowledged_pre_cutoff, reversed_by_user_id, reversed_by_name } = params
+  if (!reason.trim()) return { error: 'A reason is required.' }
+
+  const { data: entry, error: entryErr } = await supabase
+    .from('iacm_journal_entries')
+    .select('*, iacm_journal_lines(*)')
+    .eq('id', journal_entry_id)
+    .single()
+  if (entryErr || !entry) return { error: 'Journal entry not found.' }
+
+  const handler = REVERSAL_HANDLERS[entry.entry_type]
+  if (!handler) return { error: `Entries of type "${entry.entry_type}" cannot be reversed through this feature.` }
+
+  const { data: existingReversal } = await supabase
+    .from('iacm_reversals')
+    .select('id')
+    .eq('original_journal_entry_id', journal_entry_id)
+    .limit(1)
+  if (existingReversal && existingReversal.length > 0) return { error: 'This entry has already been reversed.' }
+
+  // Real asymmetry confirmed in getAccountBalance()/getAccountMovementSum()
+  // above: reversing an entry dated on/before LEDGER_CUTOFF_DATE is a
+  // no-op for every balance-sheet screen, but NOT for income-statement/
+  // BNR report queries (getAccountMovementSum has no cutoff guard) --
+  // require the caller to have shown and confirmed that distinction.
+  if (entry.entry_date <= LEDGER_CUTOFF_DATE && !acknowledged_pre_cutoff) {
+    return { error: 'This entry is dated on or before the ledger cutoff (2026-06-30). Reversing it will not change any balance-sheet total, but WILL change historical income-statement/BNR report figures for that period. Acknowledge this before proceeding.' }
+  }
+
+  let domainRow: any = null
+  let loanBefore: any = null
+  const domainRowId = handler.domainTable ? entry.reference?.slice(handler.referencePrefix.length) : null
+  if (handler.domainTable) {
+    if (!domainRowId) return { error: 'Could not determine which record this entry refers to.' }
+    const { data: row, error: rowErr } = await supabase.from(handler.domainTable).select('*').eq('id', domainRowId).single()
+    if (rowErr || !row) return { error: 'The related record was not found (it may already have been deleted).' }
+    domainRow = row
+
+    if (entry.entry_type === 'payment') {
+      const { data: loan, error: loanErr } = await supabase.from('iacm_loans').select('*').eq('id', domainRow.loan_id).single()
+      if (loanErr || !loan) return { error: 'The loan for this payment was not found.' }
+      loanBefore = loan
+    }
+
+    if (entry.entry_type === 'disbursement') {
+      const { count } = await supabase.from('iacm_payments').select('id', { count: 'exact', head: true }).eq('loan_id', domainRowId)
+      if ((count ?? 0) > 0) {
+        return { error: `This loan has ${count} real payment(s) recorded against it. Reverse ${count === 1 ? 'it' : 'them'} first, then reverse the disbursement.` }
+      }
+    }
+  }
+
+  const snapshot = {
+    journal_entry: { ...entry, iacm_journal_lines: undefined },
+    journal_lines: entry.iacm_journal_lines,
+    domain_row: domainRow,
+    loan_before: loanBefore,
+  }
+
+  const { data: reversalRow, error: reversalInsertErr } = await supabase
+    .from('iacm_reversals')
+    .insert({
+      entry_type: entry.entry_type,
+      original_journal_entry_id: entry.id,
+      original_reference: entry.reference,
+      original_entry_date: entry.entry_date,
+      original_created_by: entry.created_by,
+      domain_table: handler.domainTable,
+      domain_row_id: domainRowId,
+      snapshot,
+      reason,
+      reversed_by_user_id,
+      reversed_by_name,
+    })
+    .select('id')
+    .single()
+  if (reversalInsertErr || !reversalRow) return { error: 'Failed to write the audit record -- nothing was changed.' }
+
+  // Domain mutation, per type. Errors from here on leave the audit row
+  // in place (see function comment) rather than rolling it back.
+  if (entry.entry_type === 'payment') {
+    const principalPortion = Number(domainRow.principal_portion ?? 0)
+    const newBalance = Number(loanBefore.balance_outstanding) + principalPortion
+    const newPrincipalRepaid = Math.max(0, Number(loanBefore.principal_repaid ?? 0) - principalPortion)
+    const newInstallmentsPaid = Math.max(0, Number(loanBefore.installments_paid ?? 0) - 1)
+    const newInstallmentsOutstanding = Number(loanBefore.installments_outstanding ?? 0) + 1
+    const newStatus = newBalance <= 0 ? 'completed' : 'active'
+
+    const { error: delPayErr } = await supabase.from('iacm_payments').delete().eq('id', domainRowId)
+    if (delPayErr) return { error: `Failed to delete the payment: ${delPayErr.message}` }
+
+    const { data: remaining } = await supabase
+      .from('iacm_payments').select('payment_date').eq('loan_id', domainRow.loan_id)
+      .order('payment_date', { ascending: false }).limit(1)
+    const newLastPaymentDate = remaining && remaining.length > 0 ? remaining[0].payment_date : null
+
+    const { error: loanUpdErr } = await supabase.from('iacm_loans').update({
+      balance_outstanding: newBalance,
+      principal_repaid: newPrincipalRepaid,
+      installments_paid: newInstallmentsPaid,
+      installments_outstanding: newInstallmentsOutstanding,
+      status: newStatus,
+      last_payment_date: newLastPaymentDate,
+      updated_at: new Date().toISOString(),
+    }).eq('id', domainRow.loan_id)
+    if (loanUpdErr) return { error: `Payment deleted, but failed to update the loan: ${loanUpdErr.message}` }
+  } else if (entry.entry_type === 'disbursement' || entry.entry_type === 'expense') {
+    const { error: delErr } = await supabase.from(handler.domainTable as string).delete().eq('id', domainRowId)
+    if (delErr) return { error: `Failed to delete the record: ${delErr.message}` }
+  }
+  // shareholder_loan / cash_transfer: journal-only, no domain mutation.
+
+  const { error: delLinesErr } = await supabase.from('iacm_journal_lines').delete().eq('journal_entry_id', journal_entry_id)
+  if (delLinesErr) return { error: `Domain data reversed, but failed to delete journal lines: ${delLinesErr.message}` }
+  const { error: delEntryErr } = await supabase.from('iacm_journal_entries').delete().eq('id', journal_entry_id)
+  if (delEntryErr) return { error: `Domain data and journal lines reversed, but failed to delete the journal entry: ${delEntryErr.message}` }
+
+  return { error: null, reversal_id: reversalRow.id }
+}
+
 export interface TrialBalanceRow extends Account {
   balance: number | null
 }

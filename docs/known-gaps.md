@@ -1591,3 +1591,104 @@ the old wrong 100%-interest split — this fix corrects the algorithm
 going forward but does not retroactively correct that specific
 historical transaction. Follow-up, analogous to the Habineza/Nzungize/
 Bahati reversal-and-redo pattern, not yet requested.
+
+**Update, same night**: done. Abayisenga's payment was reversed and
+re-entered with the fixed algorithm (fee 23,600/interest 25,000/
+principal 25,000, no override). A second real issue surfaced on the
+redo — a manual "2 months" override on the interest_months field,
+based on Kevin's own loose "roughly 2 months after disbursement"
+description rather than the real calendar math (1 month, 18 days) —
+confirmed via a direct re-check of `monthsElapsed()` against the real
+dates, reversed a second time, and re-entered correctly with no
+override. See git history for both reversals; no separate write-up
+here since neither was a code bug, just confirmation the already-fixed
+code was working exactly as designed both times.
+
+## Reverse Transaction feature — generalizing tonight's manual reversal recipe into an audited, in-app action
+
+By the end of tonight's session, the same by-hand recipe had been used
+to reverse four real mistaken entries (Habineza, and Abayisenga twice)
+by connecting directly to the database with a temporary service-role
+key: delete journal lines, delete the journal entry, delete the domain
+row, recompute the loan. Correct every time, but slow, requiring a
+live DB session each time, and leaving no permanent record of what was
+undone or why beyond this file being updated after the fact.
+
+**Built**: a general Reverse Transaction feature, open to any
+authenticated admin (Kevin's explicit decision — no new role tier;
+`profiles.role` only ever had a flat admin/client/loan_officer split
+anyway). Design was planned and approved before any code was written
+(see the design questions below); implementation followed exactly.
+
+**Per-type reversal logic** (`REVERSAL_HANDLERS` + `reverseTransaction()`
+in `lib/ledger.ts`): every type deletes the journal entry + lines;
+domain data varies —
+- **Payment**: delete the `iacm_payments` row, recompute the loan
+  exactly like every manual reversal tonight (`balance_outstanding`,
+  `principal_repaid`, `installments_paid/outstanding`, `status`, and
+  `last_payment_date` set to the most recent *remaining* payment's
+  date, or null if none remain).
+- **Loan disbursement**: delete the `iacm_loans` row. Blocked entirely
+  while any real payments exist against it — reversing those
+  individually first keeps every undo tied to its own single reason,
+  rather than one click silently cascading several distinct financial
+  corrections. `iacm_clients` is never touched (may be shared/pre-existing).
+- **Expense**: delete the `iacm_expenses` row.
+- **Shareholder loan / cash transfer**: journal-only, no domain row —
+  matches how those two features were already built (no dedicated table).
+
+**Audit table**: new `iacm_reversals` (DDL in `supabase.sql`, created
+directly in the Supabase dashboard same as every other IACM table) —
+`entry_type`, `original_journal_entry_id`/`original_reference`/
+`original_entry_date`/`original_created_by` (pointers/copies, since the
+original row is deleted in the same operation), `domain_table`/
+`domain_row_id`, a `jsonb` `snapshot` of the full before-state (journal
+entry + lines, domain row, and for payments the loan's pre-recompute
+state — so a mistaken reversal is still recoverable by reading this
+table), a required `reason`, and `reversed_by_user_id` (real FK to
+`profiles`, unlike the plain-text-only `created_by` convention
+elsewhere in this ledger) plus `reversed_by_name`.
+
+**Atomicity, a deliberate departure from the ideal**: the audit row is
+written FIRST, before any deletes — not after, and not inside a real
+Postgres transaction (this project's tables aren't set up with an RPC
+function for that). If a later step fails partway, a leftover audit
+row describing an incomplete reversal is a far safer failure mode than
+a silent, unaudited deletion of real financial data. Every error path
+after the audit insert says explicitly what did and didn't complete.
+
+**UI**: `app/admin/iacm/journal/page.tsx` — the only cross-transaction-
+type list in the app, and for payments/shareholder-loan/cash-transfer
+entries the *only* list at all (no dedicated payments list page
+exists). Now shows `entry_type`/`created_by` per row (both were already
+fetched, never rendered), a Reverse button (only for the 5 reversible
+types) opening a confirm modal with a required reason field, and a new
+"Reversal History" section listing every `iacm_reversals` row.
+
+**Time limit**: no calendar expiry — real mistakes surface late, which
+is the whole reason this feature exists. Instead, a targeted guard tied
+to a real, confirmed asymmetry in `lib/ledger.ts`: `getAccountBalance()`
+ignores journal entries dated on/before `LEDGER_CUTOFF_DATE`
+(2026-06-30), so reversing one is a no-op for every balance-sheet
+screen — but `getAccountMovementSum()` (income-statement/BNR flows) has
+no such guard, so the same reversal WOULD change historical
+income-statement figures. Reversing a pre-cutoff entry requires an
+explicit checkbox acknowledging this, in addition to the reason field,
+rather than being blocked outright.
+
+**Tested**: full disposable-data suite — client → loan disbursement →
+payment → expense → shareholder-loan deposit → cash-transfer
+withdrawal, reversing each. Confirmed: Net Profit moved by exactly the
+right amount at every creation step and returned to its exact prior
+value after every reversal (verified against the real live business
+data, not a mock); the loan-disbursement block correctly refused while
+a payment existed and succeeded once it was reversed first; the loan's
+full state (`balance_outstanding`, `principal_repaid`,
+`installments_paid/outstanding`, `last_payment_date`, `status`) matched
+exactly after a payment reversal; a simulated already-reversed state was
+correctly rejected without touching the live journal entry; the
+pre-cutoff acknowledgment gate correctly blocked without the flag and
+succeeded with it; every reversal produced a complete, correct
+`iacm_reversals` audit row. 30 checks, 0 failures. Cleanup confirmed
+zero residue across all 7 affected tables and Net Profit back to the
+exact pre-test baseline.

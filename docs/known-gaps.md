@@ -1987,3 +1987,47 @@ after Step 1; Step 2's 2 journal lines exactly right and balanced
 confirmed it stayed at the post-accrual value, not gross+net; cleanup
 confirmed exact reversion of both journal entries and the expense row,
 and Net Profit back to the exact pre-test baseline.
+
+## Auto-derived narrations for Split Expense (rent) and Record Salary
+
+Same night, follow-up to both features above: their journal lines
+either needed Kevin to type which months were covered by hand (Split
+Expense) or used a generic, non-specific narration that didn't match
+real historical practice at all (Record Salary).
+
+**Split Expense**: added `buildRentNarrations()` (mirrored identically
+in the route and the live preview) deriving real month names directly
+from `expense_date` + `months_covered` — no new manual input. The
+current-period line always names just the one current month; the
+prepaid line lists every remaining covered month (correctly scales
+past 2 months — tested to 3); the VAT and cash/bank lines both
+describe the full span. Manual mode (no month-count input) falls back
+to non-month-specific language for the prepaid/VAT/cash lines, since
+there's nothing to derive it from. New shared `monthOffset()`/
+`joinMonthLabels()` helpers in `lib/calculator.ts` do the actual date
+arithmetic and natural-language joining ("July 2026" / "July & August
+2026" / "July, August & September 2026"), reused by both features
+below to avoid drift between two independent implementations.
+
+**Record Salary**: checked what narration the feature actually
+generated (built earlier the same night) — a generic "Salary accrual —
+[employee]" for the accrual and "Salary payment" for the payment,
+neither matching real historical practice at all. Checked the real
+historical journal entries directly: all 6 real Jan–Jun 2026 accrual
+entries read "Salary and wages for [Month] [Year]", no exceptions; 5
+of 6 real payment entries read "Payment of Salary and wages for
+[Month] [Year]" (May's "Payment of salary" is a one-off inconsistency
+in that specific real entry, not the intended convention). Both
+routes now derive the real month directly from the entered date —
+`expense_date` for the accrual, `payment_date` for the payment — with
+no extra input required.
+
+**Tested**: 3 real Split Expense scenarios (July 21/500,000/2 months —
+Kevin's exact real case; July 21/600,000/3 months; July 21/250,000/1
+month) plus the Record Salary case (gross 541,501, dated May 28). All
+24 checks passed: every narration matched exactly (including the
+3-month case correctly listing both prepaid months, and the 1-month
+case producing no prepaid line at all rather than an empty/malformed
+one), every journal balanced exactly, both salary narrations included
+"May 2026" as expected. Cleanup confirmed zero residue across all
+scenarios.

@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase'
 import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 import { postJournalEntry, type JournalLineInput } from '@/lib/ledger'
+import { monthOffset } from '@/lib/calculator'
 
 // Real gap found 2026-08-21: Kevin's real historical practice for salary
 // is a genuine two-step process, not a single payment -- confirmed by the
@@ -68,8 +69,17 @@ export async function POST(req: NextRequest) {
     if (cbhi > 0) lines.push({ account_code: '2570', account_name: 'CBHI Payables', credit: cbhi })
     if (netPayable > 0) lines.push({ account_code: '2580', account_name: 'Salary Payables', credit: netPayable })
 
+    // Real gap found 2026-08-21: this used a generic "Salary accrual —
+    // [employee]" narration -- the real historical accrual entries all
+    // read "Salary and wages for [Month] [Year]" (confirmed across all 6
+    // real Jan-Jun 2026 backfill entries, no exceptions). Derived directly
+    // from expense_date so it matches automatically, no extra input
+    // needed. The employee name stays on the iacm_expenses row's own
+    // description (real, useful detail the old raw journal entries never
+    // tracked at all, since they predate this app's expense table).
+    const month = monthOffset(expense_date, 0)
     const reference = `expense-${expenseRow.id}`
-    const narration = `Salary accrual — ${employee_name}`
+    const narration = `Salary and wages for ${month.name} ${month.year}`
 
     const { error: journalErr } = await postJournalEntry(supabase, {
       entry_date: expense_date, narration, reference, entry_type: 'expense',

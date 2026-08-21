@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { monthOffset, joinMonthLabels } from '@/lib/calculator'
 
 const PAYMENT_METHODS = [
   { value: 'bank_transfer', label: 'Bank Transfer' },
@@ -29,6 +30,29 @@ function computeRentSplit(total: number, months: number): { current: number; pre
   return { current, prepaid, vat }
 }
 
+// Mirrors app/api/admin/iacm/split-expense/route.ts's buildRentNarrations()
+// exactly, so this preview never shows different text than what actually
+// gets recorded. See that file's comment for the full reasoning.
+function buildRentNarrations(expenseDate: string, monthsCovered: number | null) {
+  const current = monthOffset(expenseDate, 0)
+  const currentLine = `Rent expense for ${current.name} ${current.year}`
+  if (monthsCovered && monthsCovered >= 1) {
+    const prepaidMonths = []
+    for (let i = 1; i < monthsCovered; i++) prepaidMonths.push(monthOffset(expenseDate, i))
+    const allMonths = [current, ...prepaidMonths]
+    return {
+      currentLine,
+      prepaidLine: prepaidMonths.length > 0 ? `Prepaid rent for ${joinMonthLabels(prepaidMonths)}` : null,
+      vatBankLine: `Recognition of rent payment made for ${joinMonthLabels(allMonths)}`,
+    }
+  }
+  return {
+    currentLine,
+    prepaidLine: 'Prepaid rent for this expense',
+    vatBankLine: 'Recognition of rent payment made for this expense',
+  }
+}
+
 export default function NewSplitExpense() {
   const router = useRouter()
   const [mode, setMode] = useState<'manual' | 'rent'>('manual')
@@ -49,6 +73,8 @@ export default function NewSplitExpense() {
   const prepaid = mode === 'rent' ? (rentSplit?.prepaid ?? 0) : (Number(prepaidAmount) || 0)
   const vat = mode === 'rent' ? (rentSplit?.vat ?? 0) : (Number(vatAmount) || 0)
   const total = current + prepaid + vat
+  const monthsCovered = mode === 'rent' && Number(rentMonths) > 0 ? Number(rentMonths) : null
+  const narrations = expenseDate ? buildRentNarrations(expenseDate, monthsCovered) : null
 
   async function submit() {
     if (!expenseDate) { setError('Please fill in all required fields'); return }
@@ -60,7 +86,7 @@ export default function NewSplitExpense() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         expense_date: expenseDate, current_period_amount: current, prepaid_amount: prepaid,
-        vat_amount: vat, payment_method: paymentMethod, notes,
+        vat_amount: vat, payment_method: paymentMethod, notes, months_covered: monthsCovered,
       }),
     })
     const data = await res.json()
@@ -73,7 +99,6 @@ export default function NewSplitExpense() {
 
   const inputCls = "w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
   const labelCls = "block text-xs font-semibold text-slate-600 mb-1.5"
-  const cashAccountName = paymentMethod === 'cash' ? 'Cash on Hand (3010)' : 'Bank Accounts (3020)'
 
   if (success) return (
     <div className="p-8 flex items-center justify-center min-h-[400px]">
@@ -160,14 +185,20 @@ export default function NewSplitExpense() {
           <input className={inputCls} value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Office rent — July (current) and August (prepaid)" />
         </div>
 
-        {total > 0 && (
+        {total > 0 && narrations && (
           <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm">
             <p className="font-bold text-slate-700 mb-2">Journal Preview</p>
-            <div className="space-y-1">
-              {prepaid > 0 && <div className="flex justify-between"><span className="text-slate-600">Debit: Prepaid Expenses (3050)</span><span className="font-semibold">RWF {prepaid.toLocaleString()}</span></div>}
-              {current > 0 && <div className="flex justify-between"><span className="text-slate-600">Debit: Office Rent (6210)</span><span className="font-semibold">RWF {current.toLocaleString()}</span></div>}
-              {vat > 0 && <div className="flex justify-between"><span className="text-slate-600">Debit: VAT Control Account (2530)</span><span className="font-semibold">RWF {vat.toLocaleString()}</span></div>}
-              <div className="flex justify-between border-t border-slate-200 pt-1 mt-1"><span className="text-slate-600">Credit: {cashAccountName}</span><span className="font-semibold">RWF {total.toLocaleString()}</span></div>
+            <div className="space-y-2">
+              {prepaid > 0 && (
+                <div className="flex justify-between gap-3"><span className="text-slate-600">Debit (3050): {narrations.prepaidLine}</span><span className="font-semibold whitespace-nowrap">RWF {prepaid.toLocaleString()}</span></div>
+              )}
+              {current > 0 && (
+                <div className="flex justify-between gap-3"><span className="text-slate-600">Debit (6210): {narrations.currentLine}</span><span className="font-semibold whitespace-nowrap">RWF {current.toLocaleString()}</span></div>
+              )}
+              {vat > 0 && (
+                <div className="flex justify-between gap-3"><span className="text-slate-600">Debit (2530): {narrations.vatBankLine}</span><span className="font-semibold whitespace-nowrap">RWF {vat.toLocaleString()}</span></div>
+              )}
+              <div className="flex justify-between gap-3 border-t border-slate-200 pt-2 mt-1"><span className="text-slate-600">Credit ({paymentMethod === 'cash' ? '3010' : '3020'}): {narrations.vatBankLine}</span><span className="font-semibold whitespace-nowrap">RWF {total.toLocaleString()}</span></div>
             </div>
           </div>
         )}

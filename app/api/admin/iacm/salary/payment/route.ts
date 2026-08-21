@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase'
 import { requireAdminApi } from '@/lib/admin'
 import { ok, serverError, err } from '@/lib/api'
 import { postJournalEntry, type JournalLineInput } from '@/lib/ledger'
+import { monthOffset } from '@/lib/calculator'
 
 // Step 2 of the real two-step salary process (see
 // app/api/admin/iacm/salary/accrual/route.ts for Step 1 and the full real
@@ -38,7 +39,15 @@ export async function POST(req: NextRequest) {
       { account_code: cashAccount.code, account_name: cashAccount.name, credit: amountNum },
     ]
 
-    const narration = `Salary payment${notes ? ` — ${notes}` : ''}`
+    // Real gap found 2026-08-21: this used a generic "Salary payment"
+    // narration -- checked the real historical payment entries directly:
+    // 5 of the 6 real Jan-Jun 2026 backfill entries read "Payment of
+    // Salary and wages for [month] [year]"; May's is the one outlier
+    // ("Payment of salary", no month), a one-off inconsistency in that
+    // real entry rather than the intended convention. Matches the 5/6
+    // majority pattern, derived from payment_date so it's automatic.
+    const month = monthOffset(payment_date, 0)
+    const narration = `Payment of Salary and wages for ${month.name} ${month.year}${notes ? ` — ${notes}` : ''}`
     const reference = `salary-payment-${randomUUID()}`
 
     const { error } = await postJournalEntry(supabase, {

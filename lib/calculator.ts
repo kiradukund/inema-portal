@@ -163,3 +163,40 @@ export function generateApplicationNumber(sequence: number): string {
   const year = new Date().getFullYear()
   return `INEMA-${year}-${String(sequence).padStart(4, '0')}`
 }
+
+// ─── MONTH-LABEL HELPERS ─────────────────────────────────────────────────────
+// Shared by Split Expense and Record Salary (2026-08-21) to auto-derive real
+// month names from a single entered date, instead of requiring Kevin to type
+// them by hand -- the same fix, generalized, for both features' journal
+// narrations. Safe to import from both server routes and 'use client' forms
+// (no server-only dependencies), same as monthsElapsed() above.
+export const MONTH_NAMES = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+]
+
+// The calendar month `offsetMonths` months after the month of `dateStr`
+// (offsetMonths=0 -> the same month `dateStr` falls in). Parses the
+// YYYY-MM-DD prefix directly rather than `new Date(dateStr)` to avoid the
+// UTC-parsing/local-timezone-shift class of bug already documented in
+// lib/ledger.ts's toLocalDateString.
+export function monthOffset(dateStr: string, offsetMonths: number): { name: string; year: number } {
+  const [y, m] = dateStr.split('-').map(Number)
+  const d = new Date(y, m - 1 + offsetMonths, 1)
+  return { name: MONTH_NAMES[d.getMonth()], year: d.getFullYear() }
+}
+
+// Joins month labels into natural language matching real historical
+// narration style: "July 2026" (one), "July & August 2026" (two), "July,
+// August & September 2026" (three or more) -- year shown once at the end
+// when every month shares the same year, or spelled out per-month if the
+// list crosses a year boundary (e.g. a payment spanning Dec into Jan).
+export function joinMonthLabels(months: { name: string; year: number }[]): string {
+  if (months.length === 0) return ''
+  const sameYear = months.every(m => m.year === months[0].year)
+  const labels = sameYear ? months.map(m => m.name) : months.map(m => `${m.name} ${m.year}`)
+  const suffix = sameYear ? ` ${months[months.length - 1].year}` : ''
+  if (labels.length === 1) return `${labels[0]}${suffix}`
+  if (labels.length === 2) return `${labels[0]} & ${labels[1]}${suffix}`
+  return `${labels.slice(0, -1).join(', ')} & ${labels[labels.length - 1]}${suffix}`
+}

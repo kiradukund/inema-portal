@@ -1826,3 +1826,62 @@ genuine second real row, and that a non-duplicate case (same category/
 loan/client but a different amount) triggers no warning at all and
 saves directly. All 12 passed. Cleanup confirmed zero residue across
 expenses, payments, loans, and clients.
+
+## Real miscoding: rent recorded as "Salaries & Wages" (expense-4157d291-de7a-4301-819f-60e8b2042042)
+
+A real rent payment (500,000, dated 2026-07-21, "paid rent for july and
+august") posted as Dr 6110 Salaries & Wages / Cr 3020 Bank Accounts —
+completely wrong category. Traced to a real, confirmed root cause, not
+a one-off mis-click: Record Expense's category dropdown defaulted to
+`'personnel'` in the form's initial state, not a neutral placeholder.
+Anyone who fills in date/description/amount without deliberately
+touching the category dropdown silently submits as "Salaries & Wages"
+regardless of what the expense actually is — the same class of
+invisible-default issue as the interest-months override fixed earlier
+for Bahati Eric.
+
+**Fixed**: `app/admin/iacm/expenses/new/page.tsx` now defaults
+`category` to `''`, shows a disabled `-- Select category --` as the
+first option, and blocks submission client-side until a real category
+is chosen (the server already rejected an empty category via its
+existing `!category` check, now actually reachable).
+
+Also confirmed, separately: Kevin's real historical practice for this
+exact kind of transaction (rent covering one already-elapsed month and
+one prepaid in advance) is a real 4-line split — Debit Prepaid Expenses
+(future portion), Debit Office Rent (current portion), Debit VAT
+Control, Credit Bank — and **neither existing feature could express
+it**. Record Expense is a strict one-category-to-one-account map (2
+lines only). The manual "New Journal Entry" feature deliberately
+excludes every 6xxx/7xxx account (`lib/ledger.ts`'s `CHART_OF_ACCOUNTS`
+comment — income-statement flows must come from `iacm_expenses`/
+`iacm_payments` only, never raw journal lines, or Net Profit gets a
+second, inconsistent source of truth), so it can't post the Office Rent
+line either.
+
+**Built**: a new "Split Expense" feature
+(`app/api/admin/iacm/split-expense/route.ts` +
+`app/admin/iacm/split-expense/new/page.tsx`), named generally since the
+same prepaid/current/VAT shape applies to any prepaid cost, not just
+rent. Writes a real `iacm_expenses` row for the current-period portion
+only (`category: 'rent'`, correctly flowing into Net Profit), then
+posts the full real 4-line journal split directly. Reuses the
+`expense-<id>` reference convention, so it integrates for free with the
+Reverse Transaction feature and the Journal page — no changes needed
+either place.
+
+**Tested**: real disposable scenario matching the actual transaction —
+500,000 total split into 211,865 current-period / 211,864 prepaid /
+76,271 VAT. All 15 checks passed: 4 journal lines, correctly balanced
+(debit total = credit total = 500,000); each line exactly right;
+`iacm_expenses` shows only 211,865 under `rent`, not 500,000 or
+211,864; Net Profit moved by exactly 211,865 (confirmed it did NOT move
+by the full 500,000 or by the prepaid 211,864); cleanup confirmed exact
+reversion.
+
+**Not yet done**: the real miscoded transaction
+(`expense-4157d291-de7a-4301-819f-60e8b2042042`) is left untouched —
+Kevin's explicit instruction was to leave it as-is until the new
+feature existed, then reverse it via the Reverse Transaction feature
+and re-record it correctly through Split Expense. Follow-up, not yet
+requested.

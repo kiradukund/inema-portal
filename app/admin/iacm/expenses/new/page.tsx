@@ -64,9 +64,16 @@ const PAYMENT_METHODS = [
 
 export default function NewExpense() {
   const router = useRouter()
+  // Real incident, 2026-08-21: a rent payment (500,000) was recorded as
+  // "Salaries & Wages" because the category dropdown silently defaulted to
+  // 'personnel' -- the description/amount/date were filled in correctly,
+  // but the category was never deliberately touched. Defaulting to '' (with
+  // a real placeholder, not a valid category) forces an explicit choice
+  // every time, the same principle as the "MANUAL OVERRIDE ACTIVE" badge
+  // added earlier for Record Payment.
   const [form, setForm] = useState({
     expense_date: new Date().toISOString().split('T')[0],
-    category: 'personnel',
+    category: '',
     description: '',
     amount: '',
     payment_method: 'bank_transfer',
@@ -79,6 +86,7 @@ export default function NewExpense() {
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })) }
 
   async function submit(confirmedDuplicate = false) {
+    if (!form.category) { setError('Please select a category'); return }
     if (!form.description || !form.amount || !form.expense_date) {
       setError('Please fill in all required fields'); return
     }
@@ -134,6 +142,7 @@ export default function NewExpense() {
         <div>
           <label className={labelCls}>Category *</label>
           <select className={inputCls} value={form.category} onChange={e => set('category', e.target.value)}>
+            <option value="" disabled>-- Select category --</option>
             {CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
           </select>
         </div>

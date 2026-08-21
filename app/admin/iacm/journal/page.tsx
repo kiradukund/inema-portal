@@ -11,6 +11,7 @@ const ENTRY_TYPE_LABELS: Record<string, string> = {
   disbursement: 'Disbursement',
   payment: 'Payment',
   expense: 'Expense',
+  salary_payment: 'Salary Payment',
   shareholder_loan: 'Shareholder Loan',
   cash_transfer: 'Cash Transfer',
   manual: 'Manual',

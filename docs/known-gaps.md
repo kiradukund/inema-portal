@@ -1923,3 +1923,67 @@ this schema. Points back to `docs/tenant-isolation-inventory.md` for
 the full analysis; `saas-readiness-notes.md` is a lightweight running
 log for new features going forward, not a re-derivation of that
 inventory.
+
+## Record Salary — the real two-step accrual/payment process, missing entirely from Record Expense
+
+Same night, follow-up to the rent/Split Expense finding: Kevin's real
+historical practice for salary is a genuine two-step process (accrue
+gross + statutory deductions when earned, pay the net separately when
+actually paid out), confirmed by the historical backfill's own journal
+entries — 6 real matching pairs, Jan–Jun 2026, each a "Salary and wages
+for X" accrual (Dr 6110 gross / Cr 2540/2550/2560/2570 deductions / Cr
+2580 net payable) followed by a separate "Payment of Salary and wages
+for X" (Dr 2580 / Cr 3020, net amount only).
+
+**Confirmed broken, same structural class as rent**: Record Expense's
+`personnel` category is a strict one-category-to-one-account map (2
+lines only) — it would post the full gross straight to 6110 with zero
+PAYE/Maternity/Pension/CBHI/net-payable breakdown, understating what's
+actually owed to RRA/RSSB and never creating those liabilities at all.
+The manual Journal Entry feature can't help either (excludes 6xxx by
+design, same reason it couldn't do rent).
+
+**Investigated whether real damage had already happened before
+concluding anything**: `personnel` has **never actually been used**
+live — zero real `iacm_expenses` rows with that category, ever. The 4
+real statutory payments dated 2026-07-08 that superficially looked like
+they might be evidence of this gap (114,000 PAYE / 3,000 Maternity /
+70,000 Pension / 1,773 CBHI — matching Kevin's own example numbers
+exactly) turned out to be **correct**: checked `iacm_opening_balances`
+and found 2540/2550/2560/2570 carrying real reconciled payable balances
+as of the ledger cutoff, and each July 8 transaction is a clean `Dr
+<liability> / Cr Bank` clearing exactly that owed amount — a legitimate
+Step 2 payment against an already-established real liability, not a
+new expense. So the gap is a real, live structural risk waiting to
+trigger the first time a new payroll period needs recording — not an
+already-realized miscoding requiring reversal.
+
+**Built**: "Record Salary" (`app/admin/iacm/salary/new/page.tsx`), two
+separate real actions matching the actual historical practice exactly,
+not one combined form:
+- **Step 1 — Accrual** (`app/api/admin/iacm/salary/accrual/route.ts`):
+  real `iacm_expenses` row for the full gross (`category: 'personnel'`,
+  so Net Profit reflects the true cost), plus a direct 6-line journal
+  entry — Dr 6110 (gross) / Cr 2540 (PAYE) / Cr 2550 (Maternity) / Cr
+  2560 (Pension) / Cr 2570 (CBHI) / Cr 2580 (net payable, computed as
+  gross minus all four deductions). No cash/bank line, matching the
+  real historical accrual entries exactly.
+- **Step 2 — Payment** (`app/api/admin/iacm/salary/payment/route.ts`):
+  journal-only, no domain row (same architecture as Shareholder
+  Loan/Cash Transfer) — Dr 2580 Salary Payables / Cr Bank or Cash, for
+  the net amount. New `entry_type: 'salary_payment'`, added to
+  `REVERSAL_HANDLERS` in `lib/ledger.ts` so it's reversible via the
+  Reverse Transaction feature like everything else, and to the Journal
+  page's type labels.
+
+**Tested**: real disposable scenario matching Kevin's exact historical
+numbers (gross 541,501 / PAYE 114,000 / Maternity 3,000 / Pension
+70,000 / CBHI 1,773 / net payable 352,728). All 18 checks passed: net
+payable computed correctly; Step 1's 6 journal lines each exactly
+right and balanced (541,501 = 541,501); `iacm_expenses` shows the full
+gross under `personnel`; Net Profit moved by exactly the full gross
+after Step 1; Step 2's 2 journal lines exactly right and balanced
+(352,728 = 352,728); **Net Profit did NOT move again after Step 2** —
+confirmed it stayed at the post-accrual value, not gross+net; cleanup
+confirmed exact reversion of both journal entries and the expense row,
+and Net Profit back to the exact pre-test baseline.

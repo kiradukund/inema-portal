@@ -215,6 +215,7 @@ export const REVERSAL_HANDLERS: Record<string, { domainTable: string | null; ref
   disbursement:     { domainTable: 'iacm_loans',    referencePrefix: 'loan-' },
   payment:          { domainTable: 'iacm_payments', referencePrefix: 'payment-' },
   expense:          { domainTable: 'iacm_expenses', referencePrefix: 'expense-' },
+  salary_payment:   { domainTable: null,            referencePrefix: 'salary-payment-' },
   shareholder_loan: { domainTable: null,            referencePrefix: 'shareholder-loan-' },
   cash_transfer:    { domainTable: null,            referencePrefix: 'cash-transfer-' },
 }

@@ -36,6 +36,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     { href: '/admin/iacm/payments/new', icon: '💵', label: 'Record Payment' },
     { href: '/admin/iacm/expenses/new', icon: '🧾', label: 'Record Expense' },
     { href: '/admin/iacm/split-expense/new', icon: '🧮', label: 'Split Expense (Prepaid)' },
+    { href: '/admin/iacm/salary/new',   icon: '🧑‍💼', label: 'Record Salary' },
     { href: '/admin/iacm/cash-transfer/new', icon: '🏧', label: 'Cash Withdrawal / Transfer' },
     { href: '/admin/iacm/shareholder-loan/new', icon: '🏛️', label: 'Shareholder Loan' },
     { href: '/admin/iacm/journal',      icon: '📒', label: 'Journal' },

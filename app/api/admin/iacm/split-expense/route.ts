@@ -23,6 +23,12 @@ import { postJournalEntry, type JournalLineInput } from '@/lib/ledger'
 // there. Named generally ("split expense") rather than "rent" specifically
 // since the same prepaid/current/VAT shape applies to any prepaid cost,
 // not just rent -- callers choose the category.
+//
+// Single-tenant assumption, documented not fixed: like every other IACM
+// route, this reads/writes iacm_expenses/iacm_journal_entries/
+// iacm_journal_lines with no tenant scoping -- there's no tenant concept
+// anywhere in this schema. See docs/tenant-isolation-inventory.md (the
+// full analysis) and docs/saas-readiness-notes.md (this feature's entry).
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireAdminApi()

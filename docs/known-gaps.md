@@ -1885,3 +1885,41 @@ Kevin's explicit instruction was to leave it as-is until the new
 feature existed, then reverse it via the Reverse Transaction feature
 and re-record it correctly through Split Expense. Follow-up, not yet
 requested.
+
+## Split Expense "This is rent" quick mode
+
+Same night, follow-up: entering a split rent payment by hand (working
+out current/prepaid/VAT portions manually) was more friction than
+needed for the common case. Added a "This is Rent (Quick Mode)" toggle
+to the Split Expense form — enter just the total paid and the number of
+months it covers, and the three portions are derived automatically.
+Manual entry mode is unchanged and still fully available.
+
+**Formula** (`computeRentSplit()` in
+`app/admin/iacm/split-expense/new/page.tsx`): VAT is rounded FIRST
+(`Math.round(total - total / 1.18)`), then the pre-VAT total is taken
+as the exact remainder (`total - vat`, not the raw division kept as a
+float), then the monthly rent is rounded and the leftover goes to
+prepaid. This specific order is what makes current+prepaid+vat always
+reconcile to exactly the real total paid, and is also what reproduces
+Kevin's real recorded transaction exactly — rounding the raw
+total/1.18/months figure directly (the more "obvious" order) gives
+211,864/211,865, the reverse of the real values.
+
+**Tested**: verified the formula reproduces Kevin's real transaction
+exactly (500,000 total, 2 months → current 211,865 / prepaid 211,864 /
+VAT 76,271, matching the real recorded values precisely), then ran both
+that scenario and a second one (300,000 / 3 months → 84,746 / 169,491 /
+45,763) against real disposable data. All 8 checks passed: journal
+balances exactly in both cases, Net Profit moves by exactly the
+current-period amount in both cases, and cleanup confirmed exact
+reversion.
+
+**Documentation-only, no architecture change**: flagged (code comment
+in `app/api/admin/iacm/split-expense/route.ts` + new
+`docs/saas-readiness-notes.md`) that this feature assumes single-tenant
+data like every other IACM route — no tenant scoping exists anywhere in
+this schema. Points back to `docs/tenant-isolation-inventory.md` for
+the full analysis; `saas-readiness-notes.md` is a lightweight running
+log for new features going forward, not a re-derivation of that
+inventory.

@@ -7,21 +7,47 @@ const PAYMENT_METHODS = [
   { value: 'cash', label: 'Cash' },
 ]
 
+// "This is rent" quick mode: derives the 3-way split from just the total
+// paid and how many months it covers, instead of requiring the admin to
+// work out each portion by hand. Formula confirmed 2026-08-21 against
+// Kevin's real recorded transaction (500,000 total, 2 months -> current
+// 211,865 / prepaid 211,864 / VAT 76,271). VAT is rounded FIRST and the
+// pre-VAT total is then taken as the exact remainder (total - vat), not
+// from the raw total/1.18 division kept as a float -- rounding in that
+// order is what makes current+prepaid+vat always reconcile to EXACTLY
+// the real total paid, and is also what reproduces Kevin's real recorded
+// values precisely (rounding the raw monthly figure directly, before
+// deriving the remainder, gives 211,864/211,865 -- the reverse of the
+// real transaction).
+function computeRentSplit(total: number, months: number): { current: number; prepaid: number; vat: number } | null {
+  if (!(total > 0) || !(months > 0)) return null
+  const vat = Math.round(total - total / 1.18)
+  const preVatTotal = total - vat
+  const monthlyRent = preVatTotal / months
+  const current = Math.round(monthlyRent)
+  const prepaid = preVatTotal - current
+  return { current, prepaid, vat }
+}
+
 export default function NewSplitExpense() {
   const router = useRouter()
+  const [mode, setMode] = useState<'manual' | 'rent'>('manual')
   const [expenseDate, setExpenseDate] = useState(new Date().toISOString().split('T')[0])
   const [currentAmount, setCurrentAmount] = useState('')
   const [prepaidAmount, setPrepaidAmount] = useState('')
   const [vatAmount, setVatAmount] = useState('')
+  const [rentTotal, setRentTotal] = useState('')
+  const [rentMonths, setRentMonths] = useState('2')
   const [paymentMethod, setPaymentMethod] = useState('bank_transfer')
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
 
-  const current = Number(currentAmount) || 0
-  const prepaid = Number(prepaidAmount) || 0
-  const vat = Number(vatAmount) || 0
+  const rentSplit = mode === 'rent' ? computeRentSplit(Number(rentTotal), Number(rentMonths)) : null
+  const current = mode === 'rent' ? (rentSplit?.current ?? 0) : (Number(currentAmount) || 0)
+  const prepaid = mode === 'rent' ? (rentSplit?.prepaid ?? 0) : (Number(prepaidAmount) || 0)
+  const vat = mode === 'rent' ? (rentSplit?.vat ?? 0) : (Number(vatAmount) || 0)
   const total = current + prepaid + vat
 
   async function submit() {
@@ -70,27 +96,57 @@ export default function NewSplitExpense() {
 
       <div className="bg-white rounded-xl border border-slate-100 shadow-sm p-6 space-y-5">
         <div>
+          <label className={labelCls}>Mode</label>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setMode('rent')}
+              className={`py-2.5 rounded-lg text-sm font-semibold border ${mode === 'rent' ? 'bg-amber-600 text-white border-amber-600' : 'bg-white text-slate-600 border-slate-200'}`}>
+              🏠 This is Rent (Quick Mode)
+            </button>
+            <button type="button" onClick={() => setMode('manual')}
+              className={`py-2.5 rounded-lg text-sm font-semibold border ${mode === 'manual' ? 'bg-amber-600 text-white border-amber-600' : 'bg-white text-slate-600 border-slate-200'}`}>
+              ✍️ Manual Entry
+            </button>
+          </div>
+        </div>
+
+        <div>
           <label className={labelCls}>Payment Date *</label>
           <input type="date" className={inputCls} value={expenseDate} onChange={e => setExpenseDate(e.target.value)} />
         </div>
 
-        <div>
-          <label className={labelCls}>Current-Period Amount (RWF) *</label>
-          <input type="number" className={inputCls} value={currentAmount} onChange={e => setCurrentAmount(e.target.value)} placeholder="e.g. 211865" />
-          <p className="text-xs text-slate-400 mt-1">The real expense recognized this period — Debit 6210 Office Rent. This is the only part that reduces Net Profit.</p>
-        </div>
+        {mode === 'rent' ? (
+          <>
+            <div>
+              <label className={labelCls}>Total Amount Paid (RWF) *</label>
+              <input type="number" className={inputCls} value={rentTotal} onChange={e => setRentTotal(e.target.value)} placeholder="e.g. 500000" />
+            </div>
+            <div>
+              <label className={labelCls}>Number of Months Covered *</label>
+              <input type="number" min="1" className={inputCls} value={rentMonths} onChange={e => setRentMonths(e.target.value)} placeholder="e.g. 2" />
+              <p className="text-xs text-slate-400 mt-1">This month's rent is recognized now (Office Rent); every month beyond the first is treated as prepaid in advance.</p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <label className={labelCls}>Current-Period Amount (RWF) *</label>
+              <input type="number" className={inputCls} value={currentAmount} onChange={e => setCurrentAmount(e.target.value)} placeholder="e.g. 211865" />
+              <p className="text-xs text-slate-400 mt-1">The real expense recognized this period — Debit 6210 Office Rent. This is the only part that reduces Net Profit.</p>
+            </div>
 
-        <div>
-          <label className={labelCls}>Prepaid (Future-Period) Amount (RWF)</label>
-          <input type="number" className={inputCls} value={prepaidAmount} onChange={e => setPrepaidAmount(e.target.value)} placeholder="e.g. 211864" />
-          <p className="text-xs text-slate-400 mt-1">Paid in advance for a future period — Debit 3050 Prepaid Expenses. Not an expense yet.</p>
-        </div>
+            <div>
+              <label className={labelCls}>Prepaid (Future-Period) Amount (RWF)</label>
+              <input type="number" className={inputCls} value={prepaidAmount} onChange={e => setPrepaidAmount(e.target.value)} placeholder="e.g. 211864" />
+              <p className="text-xs text-slate-400 mt-1">Paid in advance for a future period — Debit 3050 Prepaid Expenses. Not an expense yet.</p>
+            </div>
 
-        <div>
-          <label className={labelCls}>VAT Amount (RWF)</label>
-          <input type="number" className={inputCls} value={vatAmount} onChange={e => setVatAmount(e.target.value)} placeholder="e.g. 76271" />
-          <p className="text-xs text-slate-400 mt-1">Debit 2530 VAT Control Account.</p>
-        </div>
+            <div>
+              <label className={labelCls}>VAT Amount (RWF)</label>
+              <input type="number" className={inputCls} value={vatAmount} onChange={e => setVatAmount(e.target.value)} placeholder="e.g. 76271" />
+              <p className="text-xs text-slate-400 mt-1">Debit 2530 VAT Control Account.</p>
+            </div>
+          </>
+        )}
 
         <div>
           <label className={labelCls}>Payment Method</label>
@@ -116,7 +172,7 @@ export default function NewSplitExpense() {
           </div>
         )}
 
-        <button onClick={submit} disabled={loading}
+        <button onClick={() => submit()} disabled={loading}
           className="w-full bg-amber-600 text-white py-3 rounded-xl font-semibold hover:bg-amber-700 disabled:opacity-60 text-sm">
           {loading ? 'Recording...' : '✓ Record Split Expense'}
         </button>

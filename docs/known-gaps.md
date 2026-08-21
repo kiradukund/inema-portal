@@ -2031,3 +2031,61 @@ case producing no prepaid line at all rather than an empty/malformed
 one), every journal balanced exactly, both salary narrations included
 "May 2026" as expected. Cleanup confirmed zero residue across all
 scenarios.
+
+## Loan Restructuring / Rollover
+
+New feature, built from a real scenario: a client owed 2,500,000 +
+interest, paid 1,000,000, defaulted on the rest — INEMA writes a new
+contract for the remaining 1,500,000 as a fresh loan. No existing
+feature could represent this: it's not a payment (no cash), not a
+normal disbursement (no new money), and needed two loan records
+updated together with a real, auditable link between them.
+
+**Real accounting, confirmed with Kevin before building**: the old
+loan is marked `status: 'restructured'` (not `'completed'` — the debt
+was transferred, not paid) with `balance_outstanding` set to 0. The new
+loan is created with the remaining principal as its `disbursed_amount`,
+linked back via a new `restructured_from_loan_id` column. The journal
+has no cash line for the principal transfer — `Cr 3110 (old loan) / Dr
+3110 (new loan)`, both for the same amount, net to zero on the shared
+GL account since 3110 isn't tracked per-loan in the ledger (the real
+per-loan state lives in `iacm_loans.balance_outstanding`). **Kevin
+confirmed a restructured contract DOES charge a fresh 4%+18%VAT
+disbursement fee** on the new principal, same as any normal new loan —
+this is the one real, non-zero effect on any account balance (`Dr 3030
+/ Cr 7020 / Cr 2530`), a genuine cost of the new contract even though
+no principal cash moved. Flagged as an open question rather than
+guessed, since the two options had materially different real
+consequences (fee vs. no fee changes whether Net Profit/Total Assets
+move at all).
+
+**Real schema check before writing any code**: confirmed the *actual
+live* `iacm_loans.status` column has no CHECK constraint blocking
+`'restructured'` at all — `supabase.sql`'s tracked DDL
+(`check (status in ('active', 'completed'))`) is stale, consistent with
+this table's already-known drift from its real dashboard-managed
+schema. Only `restructured_from_loan_id` needed a real migration, which
+Kevin ran directly via the SQL Editor.
+
+**Reversal**: doesn't fit any existing `REVERSAL_HANDLERS` shape (it
+touches two loan records, not one), so `reverseTransaction()`
+(`lib/ledger.ts`) got a dedicated `loan_restructuring` branch — restores
+the old loan's `status`/`balance_outstanding` and deletes the new loan.
+The old loan's pre-restructuring balance is recovered from the new
+loan's own `disbursed_amount` (always exactly equal, since a
+restructuring always transfers a loan's *entire* remaining balance) —
+no extra snapshot storage needed. Same payment-block safety check as
+disbursement reversal: blocked if the new loan already has real
+payments recorded against it.
+
+**Tested**: real scenario matching Kevin's numbers exactly (old loan
+2,500,000, a real 1,000,000 payment, remaining 1,500,000 restructured
+with a fresh fee). All 20 checks passed: old loan correctly
+`restructured`/0; new loan correctly 1,500,000 with the link set;
+restructuring journal balanced exactly (1,570,800 = 1,570,800); **Total
+Assets moved by exactly the fee+VAT (70,800), not the full 1,500,000
+principal**; **Net Profit moved by exactly the fee income (60,000), not
+fee+VAT**; reversal correctly restored the old loan and deleted the
+new one, with both figures reverting exactly to their
+pre-restructuring values; final cleanup confirmed zero residue and
+both figures back to the true pre-test baseline.

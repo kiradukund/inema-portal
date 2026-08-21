@@ -212,12 +212,13 @@ export async function getAccountMovementSum(
 // the domain row's id (e.g. reference = "payment-<uuid>"). 'manual'
 // entries are deliberately not in this map -- out of scope.
 export const REVERSAL_HANDLERS: Record<string, { domainTable: string | null; referencePrefix: string }> = {
-  disbursement:     { domainTable: 'iacm_loans',    referencePrefix: 'loan-' },
-  payment:          { domainTable: 'iacm_payments', referencePrefix: 'payment-' },
-  expense:          { domainTable: 'iacm_expenses', referencePrefix: 'expense-' },
-  salary_payment:   { domainTable: null,            referencePrefix: 'salary-payment-' },
-  shareholder_loan: { domainTable: null,            referencePrefix: 'shareholder-loan-' },
-  cash_transfer:    { domainTable: null,            referencePrefix: 'cash-transfer-' },
+  disbursement:      { domainTable: 'iacm_loans',    referencePrefix: 'loan-' },
+  payment:           { domainTable: 'iacm_payments', referencePrefix: 'payment-' },
+  expense:           { domainTable: 'iacm_expenses', referencePrefix: 'expense-' },
+  salary_payment:    { domainTable: null,            referencePrefix: 'salary-payment-' },
+  shareholder_loan:  { domainTable: null,            referencePrefix: 'shareholder-loan-' },
+  cash_transfer:     { domainTable: null,            referencePrefix: 'cash-transfer-' },
+  loan_restructuring: { domainTable: 'iacm_loans',   referencePrefix: 'loan-' },
 }
 
 export interface ReverseTransactionParams {
@@ -296,6 +297,25 @@ export async function reverseTransaction(
         return { error: `This loan has ${count} real payment(s) recorded against it. Reverse ${count === 1 ? 'it' : 'them'} first, then reverse the disbursement.` }
       }
     }
+
+    // Loan Restructuring (2026-08-21): domainRow here is the NEW loan
+    // created by the restructuring. Reversing it means restoring the OLD
+    // loan (found via restructured_from_loan_id) back to 'active' with its
+    // real pre-restructuring balance -- recoverable without a separate
+    // snapshot, since a restructuring always transfers the OLD loan's
+    // *entire* balance, so that exact figure is already sitting on the new
+    // loan's own disbursed_amount. Same payment-block safety check as
+    // disbursement: if real payments already exist on the new loan, those
+    // must be reversed first.
+    if (entry.entry_type === 'loan_restructuring') {
+      if (!domainRow.restructured_from_loan_id) {
+        return { error: 'This loan has no linked original loan on record -- cannot safely reverse the restructuring.' }
+      }
+      const { count } = await supabase.from('iacm_payments').select('id', { count: 'exact', head: true }).eq('loan_id', domainRowId)
+      if ((count ?? 0) > 0) {
+        return { error: `This restructured loan has ${count} real payment(s) recorded against it. Reverse ${count === 1 ? 'it' : 'them'} first, then reverse the restructuring.` }
+      }
+    }
   }
 
   const snapshot = {
@@ -352,6 +372,16 @@ export async function reverseTransaction(
       updated_at: new Date().toISOString(),
     }).eq('id', domainRow.loan_id)
     if (loanUpdErr) return { error: `Payment deleted, but failed to update the loan: ${loanUpdErr.message}` }
+  } else if (entry.entry_type === 'loan_restructuring') {
+    const { error: restoreErr } = await supabase.from('iacm_loans').update({
+      balance_outstanding: domainRow.disbursed_amount,
+      status: 'active',
+      updated_at: new Date().toISOString(),
+    }).eq('id', domainRow.restructured_from_loan_id)
+    if (restoreErr) return { error: `Failed to restore the original loan: ${restoreErr.message}` }
+
+    const { error: delErr } = await supabase.from('iacm_loans').delete().eq('id', domainRowId)
+    if (delErr) return { error: `Original loan restored, but failed to delete the new loan: ${delErr.message}` }
   } else if (entry.entry_type === 'disbursement' || entry.entry_type === 'expense') {
     const { error: delErr } = await supabase.from(handler.domainTable as string).delete().eq('id', domainRowId)
     if (delErr) return { error: `Failed to delete the record: ${delErr.message}` }

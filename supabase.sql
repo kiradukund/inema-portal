@@ -514,6 +514,18 @@ create table if not exists iacm_loans (
   updated_at                  timestamptz not null default now()
 );
 
+-- ─── LOAN RESTRUCTURING — Run this in Supabase SQL Editor ────────────────
+-- Added 2026-08-21 for the Loan Restructuring / Rollover feature
+-- (app/api/admin/iacm/loans/restructure/route.ts): links a new loan back
+-- to the old one it was restructured from, so the history stays
+-- traceable. Confirmed against the real live table before writing this:
+-- no CHECK constraint actually blocks a 'restructured' status value
+-- (this tracked DDL's `check (status in ('active', 'completed'))` above
+-- is stale, like the rest of this table's real schema — no migration was
+-- needed for that part).
+alter table iacm_loans add column if not exists restructured_from_loan_id uuid references iacm_loans(id);
+create index if not exists idx_iacm_loans_restructured_from on iacm_loans(restructured_from_loan_id);
+
 -- ─── IACM PAYMENTS ────────────────────────────────────────────────────────
 create table if not exists iacm_payments (
   id                 uuid primary key default uuid_generate_v4(),

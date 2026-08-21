@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireAdminApi()
     if (!auth.ok) return auth.response
-    const { client, loan } = await req.json()
+    const { client, loan, confirmed_duplicate } = await req.json()
     const supabase = createAdminClient()
 
     // 1. Check if client already exists by NID
@@ -49,11 +49,38 @@ export async function POST(req: NextRequest) {
       clientId = newClient.id
     }
 
-    // 2. Generate loan number
+    // 2. Duplicate-detection warning (not a hard block): same client, same
+    // amount, same disbursement date is the exact shape of an accidental
+    // double-submit. A real second loan with all three identical is rare
+    // but not impossible, so this only warns -- the caller resubmits with
+    // confirmed_duplicate:true to proceed. Checked AFTER the client is
+    // resolved above (need the real clientId, whether new or existing) but
+    // BEFORE generating a loan number or inserting, so a cancelled warning
+    // never consumes a loan number or writes anything.
+    if (!confirmed_duplicate) {
+      const { data: dup } = await supabase
+        .from('iacm_loans')
+        .select('loan_number, disbursed_amount, disbursement_date')
+        .eq('client_id', clientId)
+        .eq('disbursed_amount', Number(loan.disbursed_amount))
+        .eq('disbursement_date', loan.disbursement_date)
+        .maybeSingle()
+      if (dup) {
+        return ok({
+          possible_duplicate: true,
+          existing: {
+            label: dup.loan_number, client_name: client.full_name,
+            amount: dup.disbursed_amount, date: dup.disbursement_date,
+          },
+        })
+      }
+    }
+
+    // 3. Generate loan number
     const { count } = await supabase.from('iacm_loans').select('*', { count: 'exact', head: true })
     const loanNumber = `INEMA-${new Date().getFullYear()}-${String((count ?? 0) + 1).padStart(4, '0')}`
 
-    // 3. Create loan record
+    // 4. Create loan record
     const { data: newLoan, error: loanErr } = await supabase.from('iacm_loans').insert({
       client_id: clientId,
       loan_number: loanNumber,

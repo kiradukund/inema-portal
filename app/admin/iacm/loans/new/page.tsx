@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import DuplicateWarningModal, { type DuplicateExisting } from '../../DuplicateWarningModal'
 
 const DISTRICTS = ['Bugesera','Burera','Gakenke','Gasabo','Gatsibo','Gicumbi','Gisagara',
 'Huye','Kamonyi','Karongi','Kayonza','Kicukiro','Kirehe','Muhanga','Musanze',
@@ -30,6 +31,7 @@ export default function NewLoanEntry() {
   const [step, setStep] = useState(1)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [duplicate, setDuplicate] = useState<DuplicateExisting | null>(null)
 
   const [client, setClient] = useState({
     full_name: '', national_id: '', phone: '', gender: 'male',
@@ -46,16 +48,19 @@ export default function NewLoanEntry() {
     loan_officer: 'KUBWIMANA Devotha', disbursement_method: 'bank_transfer',
   })
 
-  async function submit() {
+  async function submit(confirmedDuplicate = false) {
     setLoading(true); setError('')
     try {
       const res = await fetch('/api/admin/iacm/loans', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client, loan }),
+        body: JSON.stringify({ client, loan, confirmed_duplicate: confirmedDuplicate }),
       })
       const data = await res.json()
-      if (data.success) {
+      if (data.success && data.data?.possible_duplicate) {
+        setDuplicate(data.data.existing)
+        setLoading(false)
+      } else if (data.success) {
         router.push('/admin/iacm/loans')
         router.refresh()
       } else {
@@ -326,12 +331,21 @@ export default function NewLoanEntry() {
           </div>
           <div className="mt-6 flex justify-between">
             <button onClick={() => setStep(2)} className="text-slate-500 hover:text-slate-700 text-sm font-semibold">← Edit</button>
-            <button onClick={submit} disabled={loading}
+            <button onClick={() => submit()} disabled={loading}
               className="bg-green-600 text-white px-8 py-2.5 rounded-xl font-semibold text-sm hover:bg-green-700 disabled:opacity-60">
               {loading ? 'Saving...' : '✓ Save Loan Record'}
             </button>
           </div>
         </div>
+      )}
+
+      {duplicate && (
+        <DuplicateWarningModal
+          existing={duplicate}
+          loading={loading}
+          onCancel={() => setDuplicate(null)}
+          onConfirm={() => { setDuplicate(null); submit(true) }}
+        />
       )}
     </div>
   )

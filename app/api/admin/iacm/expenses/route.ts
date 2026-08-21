@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
     const auth = await requireAdminApi()
     if (!auth.ok) return auth.response
     const body = await req.json()
-    const { expense_date, category, description, amount, payment_method } = body
+    const { expense_date, category, description, amount, payment_method, confirmed_duplicate } = body
     if (!expense_date || !category || !description || !amount) return err('Missing required fields')
     // Rejected before any insert happens -- a stale client (cached page,
     // old bookmark) sending the removed 'petty_cash' category must not
@@ -21,6 +21,28 @@ export async function POST(req: NextRequest) {
     }
 
     const supabase = createAdminClient()
+
+    // Duplicate-detection warning (not a hard block): same category, same
+    // amount, same date is the exact shape of an accidental double-submit.
+    // A real second identical expense does happen (e.g. two equal bank
+    // charges in a month), so this only warns -- resubmit with
+    // confirmed_duplicate:true to proceed.
+    if (!confirmed_duplicate) {
+      const { data: dup } = await supabase
+        .from('iacm_expenses')
+        .select('category, amount, expense_date, description')
+        .eq('category', category)
+        .eq('amount', Number(amount))
+        .eq('expense_date', expense_date)
+        .maybeSingle()
+      if (dup) {
+        return ok({
+          possible_duplicate: true,
+          existing: { label: dup.description, amount: dup.amount, date: dup.expense_date },
+        })
+      }
+    }
+
     const { data, error } = await supabase.from('iacm_expenses').insert({
       expense_date, category, description,
       amount: Number(amount), payment_method: payment_method ?? 'bank_transfer',

@@ -1770,3 +1770,59 @@ disposable 60,000 VAT payment: the real VAT Control Account balance
 correctly moved to 17,712 — a clean 60,000 decrease — while Net Profit
 stayed exactly unchanged (6,407,464.4 before and after). Cleanup
 confirmed both reverted exactly and the test rows were gone.
+
+## Out-of-order date entry — confirmed safe, no gap
+
+Kevin asked: if a transaction dated July 24 is recorded, then a
+different one dated July 19 is entered afterward, does the app still
+display and calculate everything correctly, or does insertion order
+leak into anything? Tested directly against real disposable data
+(payment dated July 24 inserted first, payment dated July 19 inserted
+second, on the same throwaway loan): the Journal page's query
+(`order('entry_date', desc).order('created_at', desc)`) correctly
+showed July 24 before July 19 despite the reverse insertion order, and
+the "most recent payment" lookup `payments/route.ts` uses for
+`monthsElapsed()` (`order('payment_date', desc)`) correctly identified
+July 24 as the more recent real date, never falling back to insertion
+order or `created_at`. No code path anywhere uses `created_at` for
+either sorting or the months calculation. Cleanup confirmed exact
+reversion. No gap, no change needed.
+
+## Duplicate-transaction warning — New Loan / Record Payment / Record Expense
+
+**Built**, per Kevin's request for a safety net against accidental
+double-entry: before this, none of the three forms had any check for
+an existing, suspiciously identical record — a same-client/same-amount/
+same-date resubmission (e.g. a slow request retried, or a genuine
+double-click) saved silently every time.
+
+**Design**: a server-side check inside each POST route (not
+client-side, so a stale cached page can't bypass it) — exact match, same
+day, on: client + disbursed_amount + disbursement_date (New Loan);
+loan + total_amount + payment_date (Record Payment); category + amount
++ expense_date (Record Expense). A match returns
+`{ possible_duplicate: true, existing }` instead of inserting; the
+frontend shows a modal (`app/admin/iacm/DuplicateWarningModal.tsx`,
+shared across all three forms) naming the existing record and asking
+"Is this a different, genuine transaction?" — "Cancel" leaves the form
+as-is, "Yes, record it anyway" resubmits with `confirmed_duplicate:
+true`, which skips the check entirely. A soft warning, not a hard
+block — a real second identical transaction (two equal bank charges in
+a month, two equal installments the same day) still goes through with
+one extra click.
+
+**Self-caught bug while wiring the frontend**: all three submit buttons
+were `onClick={submit}`, which passes the click `SyntheticEvent` as
+`submit`'s first argument. Once `submit` took a `confirmedDuplicate`
+boolean parameter, that event object would have been truthy and every
+very first submission would have silently skipped its own duplicate
+check. Fixed to `onClick={() => submit()}` before this ever shipped.
+
+**Tested**: 12 real checks across all three forms on disposable data —
+for each, confirmed the duplicate check correctly finds an identical
+existing record with the right summary, that not confirming leaves
+exactly one row saved (nothing extra), that confirming creates a
+genuine second real row, and that a non-duplicate case (same category/
+loan/client but a different amount) triggers no warning at all and
+saves directly. All 12 passed. Cleanup confirmed zero residue across
+expenses, payments, loans, and clients.

@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Suspense } from 'react'
 import { MONTHLY_INTEREST_RATE, UPFRONT_FEE_RATE, VAT_RATE, monthsElapsed } from '@/lib/calculator'
+import DuplicateWarningModal, { type DuplicateExisting } from '../../DuplicateWarningModal'
 
 function PaymentForm() {
   const router = useRouter()
@@ -20,6 +21,7 @@ function PaymentForm() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [preview, setPreview] = useState<any>(null)
+  const [duplicate, setDuplicate] = useState<DuplicateExisting | null>(null)
 
   useEffect(() => {
     fetch('/api/admin/iacm/loans').then(r => r.json()).then(d => {
@@ -77,7 +79,7 @@ function PaymentForm() {
     } else setPreview(null)
   }, [selectedLoan, amount, date, monthsOverride, loans, priorPayments])
 
-  async function submit() {
+  async function submit(confirmedDuplicate = false) {
     if (!selectedLoan || !amount || !date) { setError('Please fill all required fields'); return }
     setLoading(true); setError('')
     const res = await fetch('/api/admin/iacm/payments', {
@@ -86,12 +88,19 @@ function PaymentForm() {
       body: JSON.stringify({
         loan_id: selectedLoan, total_amount: Number(amount), payment_date: date, payment_method: method, notes,
         ...(Number(monthsOverride) > 0 ? { interest_months: Number(monthsOverride) } : {}),
+        confirmed_duplicate: confirmedDuplicate,
       }),
     })
     const data = await res.json()
-    setLoading(false)
-    if (data.success) { router.push('/admin/iacm/loans'); router.refresh() }
-    else setError(data.error ?? 'Failed to record payment')
+    if (data.success && data.data?.possible_duplicate) {
+      setDuplicate(data.data.existing)
+      setLoading(false)
+    } else if (data.success) {
+      router.push('/admin/iacm/loans'); router.refresh()
+    } else {
+      setLoading(false)
+      setError(data.error ?? 'Failed to record payment')
+    }
   }
 
   const inputCls = "w-full border border-slate-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -191,11 +200,20 @@ function PaymentForm() {
           <input className={inputCls} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Any additional notes..." />
         </div>
 
-        <button onClick={submit} disabled={loading}
+        <button onClick={() => submit()} disabled={loading}
           className="w-full bg-green-600 text-white py-3 rounded-xl font-semibold hover:bg-green-700 disabled:opacity-60">
           {loading ? 'Recording...' : '✓ Record Payment'}
         </button>
       </div>
+
+      {duplicate && (
+        <DuplicateWarningModal
+          existing={duplicate}
+          loading={loading}
+          onCancel={() => setDuplicate(null)}
+          onConfirm={() => { setDuplicate(null); submit(true) }}
+        />
+      )}
     </div>
   )
 }

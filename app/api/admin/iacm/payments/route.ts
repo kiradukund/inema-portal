@@ -9,7 +9,7 @@ export async function POST(req: NextRequest) {
   try {
     const auth = await requireAdminApi()
     if (!auth.ok) return auth.response
-    const { loan_id, total_amount, payment_date, payment_method, notes, interest_months } = await req.json()
+    const { loan_id, total_amount, payment_date, payment_method, notes, interest_months, confirmed_duplicate } = await req.json()
     if (!loan_id || !total_amount || !payment_date) return err('Missing required fields')
 
     const supabase = createAdminClient()
@@ -18,6 +18,30 @@ export async function POST(req: NextRequest) {
     const { data: loan, error: loanErr } = await supabase
       .from('iacm_loans').select('*, iacm_clients(full_name)').eq('id', loan_id).single()
     if (loanErr || !loan) return err('Loan not found', 404)
+
+    // Duplicate-detection warning (not a hard block): same loan, same
+    // amount, same date is the exact shape of an accidental double-submit
+    // (e.g. a slow request retried). A real second payment with all three
+    // identical does happen (two equal installments on the same day), so
+    // this only warns -- resubmit with confirmed_duplicate:true to proceed.
+    if (!confirmed_duplicate) {
+      const { data: dup } = await supabase
+        .from('iacm_payments')
+        .select('total_amount, payment_date')
+        .eq('loan_id', loan_id)
+        .eq('total_amount', Number(total_amount))
+        .eq('payment_date', payment_date)
+        .maybeSingle()
+      if (dup) {
+        return ok({
+          possible_duplicate: true,
+          existing: {
+            label: (loan as any).iacm_clients?.full_name ?? loan.loan_number,
+            amount: dup.total_amount, date: dup.payment_date,
+          },
+        })
+      }
+    }
 
     const outstanding = Number(loan.balance_outstanding)
     const disbursed = Number(loan.disbursed_amount)

@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import DuplicateWarningModal, { type DuplicateExisting } from '../../DuplicateWarningModal'
 
 // Real evidence, 2026-08-19: PAYE/CBHI/Pension/Maternity previously had no
 // category of their own -- the old 'tax' option ("Tax Payments (PAYE, RSSB,
@@ -73,10 +74,11 @@ export default function NewExpense() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState(false)
+  const [duplicate, setDuplicate] = useState<DuplicateExisting | null>(null)
 
   function set(k: string, v: string) { setForm(f => ({ ...f, [k]: v })) }
 
-  async function submit() {
+  async function submit(confirmedDuplicate = false) {
     if (!form.description || !form.amount || !form.expense_date) {
       setError('Please fill in all required fields'); return
     }
@@ -85,14 +87,20 @@ export default function NewExpense() {
     const res = await fetch('/api/admin/iacm/expenses', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...form, amount: Number(form.amount) }),
+      body: JSON.stringify({ ...form, amount: Number(form.amount), confirmed_duplicate: confirmedDuplicate }),
     })
     const data = await res.json()
-    setLoading(false)
-    if (data.success) {
+    if (data.success && data.data?.possible_duplicate) {
+      setDuplicate(data.data.existing)
+      setLoading(false)
+    } else if (data.success) {
+      setLoading(false)
       setSuccess(true)
       setTimeout(() => router.push('/admin/iacm'), 1500)
-    } else setError(data.error ?? 'Failed to save expense')
+    } else {
+      setLoading(false)
+      setError(data.error ?? 'Failed to save expense')
+    }
   }
 
   const inputCls = "w-full border border-slate-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-amber-500"
@@ -149,11 +157,20 @@ export default function NewExpense() {
           </select>
         </div>
 
-        <button onClick={submit} disabled={loading}
+        <button onClick={() => submit()} disabled={loading}
           className="w-full bg-amber-600 text-white py-3 rounded-xl font-semibold hover:bg-amber-700 disabled:opacity-60 text-sm">
           {loading ? 'Recording...' : '✓ Record Expense'}
         </button>
       </div>
+
+      {duplicate && (
+        <DuplicateWarningModal
+          existing={duplicate}
+          loading={loading}
+          onCancel={() => setDuplicate(null)}
+          onConfirm={() => { setDuplicate(null); submit(true) }}
+        />
+      )}
     </div>
   )
 }

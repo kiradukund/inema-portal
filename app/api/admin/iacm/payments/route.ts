@@ -84,12 +84,18 @@ export async function POST(req: NextRequest) {
       .eq('loan_id', loan_id)
       .order('payment_date', { ascending: false })
     if (priorPaymentsErr) return serverError(priorPaymentsErr)
-    const lastActivityDate = priorPayments && priorPayments.length > 0
-      ? new Date(priorPayments[0].payment_date)
-      : new Date(loan.disbursement_date)
+    const isFirstPayment = !priorPayments || priorPayments.length === 0
+    const lastActivityDate = isFirstPayment
+      ? new Date(loan.disbursement_date)
+      : new Date(priorPayments[0].payment_date)
+    // isFirstPayment gates monthsElapsed's minimum-1-month floor -- see its
+    // own comment in lib/calculator.ts. Confirmed real incident, 2026-08-22
+    // (NKUBITO RUSAMAZA Desire Demino, INEMA-2026-0009): a genuine second
+    // payment made 3 real days after her first was unconditionally floored
+    // to a full month of interest (75,090) she hadn't actually owed yet.
     const months = Number.isFinite(Number(interest_months)) && Number(interest_months) > 0
       ? Number(interest_months)
-      : monthsElapsed(lastActivityDate, new Date(payment_date))
+      : monthsElapsed(lastActivityDate, new Date(payment_date), isFirstPayment)
     const monthlyInterest = disbursed * MONTHLY_INTEREST_RATE
     const interestOwed = monthlyInterest * months
     const feeAndVatOwed = disbursed * UPFRONT_FEE_RATE * (1 + VAT_RATE)

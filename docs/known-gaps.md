@@ -2161,3 +2161,54 @@ render correctly. That specific report was never resolved with a
 second code fix; it needs direct browser console/DOM evidence to go
 further, which wasn't provided before the investigation moved on to
 other real issues. Flagged here rather than silently dropped.
+
+## monthsElapsed's minimum-1-month floor was overcharging real second-and-later payments
+
+Investigating why NKUBITO RUSAMAZA Desire Demino's loan (INEMA-2026-0009)
+showed 75,090 of interest due found the real payment trajectory was
+correct (one real payment, 2026-07-21, a 5-month catch-up that exactly
+matched flat 5% × 5 months) — but Kevin then confirmed the real,
+complete picture: she made a genuine SECOND payment (150,000, 2026-07-24,
+only 3 real days after the first) that had never been entered. Working
+through the real numbers with the existing logic found the actual bug:
+`monthsElapsed()`'s `Math.max(1, months)` floor — added earlier tonight
+specifically to protect a genuine first payment from being undercounted
+— was being applied unconditionally to every payment, including ones
+made just days after a loan's own prior real payment. It would have
+charged her a full extra month of interest (75,090) she hadn't actually
+owed, for 3 real elapsed days.
+
+**Fixed**: `monthsElapsed()` (`lib/calculator.ts`) now takes an
+`isFirstPayment` parameter — floors to a minimum of 1 month only when
+true (a loan's genuine first payment, reference date = disbursement
+date, where undercounting is the real risk being protected against);
+floors to a minimum of 0 (never negative, but no longer forced up to 1)
+for every payment after the first, where the reference date is the
+loan's own real last payment date. Staff retain the existing "Months of
+Interest to Charge" override to manually add a month when they know one
+is genuinely owed. Both `payments/route.ts` and the live preview in
+`payments/new/page.tsx` compute `isFirstPayment` from whether real prior
+payments exist and pass it through identically, so the preview never
+shows a different number than what actually posts.
+
+**Tested**: 3 real disposable scenarios. (1) A genuine first payment 2
+days after disbursement — still correctly floors to 1 month (protection
+preserved; the raw `interestOwed` for that period is exactly 50,000,
+confirming the floor itself, independent of how fee-first allocation
+then splits an actual payment amount). (2) A second payment 3 days
+after the first, matching Desire Demino's real shape — correctly shows
+0 months and 0 additional interest by default, no longer forced to 1.
+(3) A second payment genuinely over a month after the first — correctly
+still charges based on real elapsed time (1 month, 50,000 interest),
+completely unaffected by the fix. All 12 checks passed, cleanup
+confirmed zero residue.
+
+**Real correction**: checked first whether the wrong July 24 payment had
+actually been entered yet — it hadn't (the loan still showed only the
+July 21 payment), so there was nothing to reverse. Recorded the real
+July 24 payment directly with the fixed logic instead: fee 0 / interest
+0 / principal 150,000 (script hard-guarded to refuse writing anything
+unless the computed split matched this exactly). Loan's real
+`balance_outstanding` is now 2,334.96 (down from 152,334.96),
+`principal_repaid` 1,499,465.04, `last_payment_date` 2026-07-24,
+journal entry posted and balanced (150,000 = 150,000).

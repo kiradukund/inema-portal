@@ -46,9 +46,13 @@ function PaymentForm() {
       if (loan) {
         const outstanding = Number(loan.balance_outstanding)
         const disbursed = Number(loan.disbursed_amount)
-        const lastActivityDate = priorPayments.length > 0 ? new Date(priorPayments[0].payment_date) : new Date(loan.disbursement_date)
+        const isFirstPayment = priorPayments.length === 0
+        const lastActivityDate = isFirstPayment ? new Date(loan.disbursement_date) : new Date(priorPayments[0].payment_date)
         const isOverrideActive = Number(monthsOverride) > 0
-        const months = isOverrideActive ? Number(monthsOverride) : monthsElapsed(lastActivityDate, new Date(date))
+        // isFirstPayment gates the minimum-1-month floor -- see
+        // monthsElapsed()'s comment in lib/calculator.ts and the real
+        // NKUBITO RUSAMAZA Desire Demino incident it fixes.
+        const months = isOverrideActive ? Number(monthsOverride) : monthsElapsed(lastActivityDate, new Date(date), isFirstPayment)
         const interestOwed = disbursed * MONTHLY_INTEREST_RATE * months
         const feeAndVatOwed = disbursed * UPFRONT_FEE_RATE * (1 + VAT_RATE)
         // Same fix as the backend route (see its comment) -- net against

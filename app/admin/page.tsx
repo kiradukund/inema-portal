@@ -6,6 +6,10 @@ import Link from 'next/link'
 import { MonthlyCollectionsChart, LoanPortfolioDonut } from './DashboardCharts'
 
 export const dynamic = 'force-dynamic'
+// See app/admin/layout.tsx and docs/known-gaps.md — `force-dynamic` alone
+// was found not to reliably prevent a stale render (Journal page
+// incident, 2026-08-22). Audited and fixed across every admin page.
+export const revalidate = 0
 
 function KPICard({ label, value, sub, color, icon }: { label: string; value: string; sub: string; color: string; icon: string }) {
   return (

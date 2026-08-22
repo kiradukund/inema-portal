@@ -3,6 +3,10 @@ import { createServerSupabaseClient } from '@/lib/supabase'
 import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
+// See app/admin/layout.tsx and docs/known-gaps.md — `force-dynamic` alone
+// was found not to reliably prevent a stale render (Journal page
+// incident, 2026-08-22). Audited and fixed across every admin page.
+export const revalidate = 0
 
 export default async function LoanPortfolio() {
   await requireAdmin()

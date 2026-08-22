@@ -6,6 +6,10 @@ import DownloadButton from './DownloadButton'
 import ReverseButton from './ReverseButton'
 
 export const dynamic = 'force-dynamic'
+// Real incident, 2026-08-22: `dynamic = 'force-dynamic'` alone let this
+// page serve a stale render (survived hard refresh + incognito -- not a
+// browser cache issue). See app/admin/layout.tsx and docs/known-gaps.md.
+export const revalidate = 0
 
 const ENTRY_TYPE_LABELS: Record<string, string> = {
   disbursement: 'Disbursement',

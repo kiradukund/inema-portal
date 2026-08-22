@@ -2089,3 +2089,75 @@ fee+VAT**; reversal correctly restored the old loan and deleted the
 new one, with both figures reverting exactly to their
 pre-restructuring values; final cleanup confirmed zero residue and
 both figures back to the true pre-test baseline.
+
+## Journal page serving a stale render — real Data Cache gap, not browser caching
+
+Real, confirmed loan (INEMA-2026-0027, MUGWIZA Alain Herve, 2,500,000)
+appeared correctly on Loan Portfolio, and its disbursement journal
+entry existed and was fully correct in `iacm_journal_entries` (5
+balanced lines, right amounts, right reference) — but the Journal page
+kept showing a stale render with no fresh-data path. Survived a hard
+refresh AND an incognito window, ruling out browser caching entirely.
+
+**Root cause**: individual admin pages set `dynamic = 'force-dynamic'`
+alone, which disables static generation but does not reliably disable
+Next.js's own Data Cache for every fetch inside that route on every
+Next 14.2.x deploy target. Confirmed by a real, pre-existing
+inconsistency already in this codebase: `app/(portal)/loans/page.tsx`
+and `app/admin/applications/page.tsx` already paired
+`dynamic = 'force-dynamic'` with `revalidate = 0`; every other admin
+page did not.
+
+**Full audit of every page under `app/admin/`** (server-rendered pages
+only — client components don't use this route segment config at all):
+
+| Page | `dynamic='force-dynamic'` | `revalidate` (before) |
+|---|---|---|
+| `app/admin/applications/page.tsx` | yes | yes — already correct |
+| `app/admin/iacm/journal/page.tsx` | yes | missing — **fixed** |
+| `app/admin/iacm/loans/page.tsx` | yes | missing — **fixed** |
+| `app/admin/iacm/page.tsx` (IACM Home) | yes | missing — **fixed** |
+| `app/admin/inquiries/page.tsx` | yes | missing — **fixed** |
+| `app/admin/page.tsx` (Dashboard) | yes | missing — **fixed** |
+
+**Fixed two ways, deliberately redundant**: added `export const
+revalidate = 0` to each of the 5 affected pages directly, AND to
+`app/admin/layout.tsx` — the single shared layout for the entire admin
+section (confirmed no nested layouts exist under `app/admin/iacm/` or
+anywhere else). `revalidate` has real documented cascading semantics
+`dynamic` doesn't share: when a layout and its page each set a value,
+Next.js uses the shortest one across the whole route. Setting it to 0
+once on the layout makes zero-caching the enforced floor for every
+page under `/admin`, current or future — no one has to remember to add
+it to a new page for this specific protection to apply. The explicit
+per-page directives stay too, as defense in depth and self-documentation.
+
+**BNR/CRB report pages checked specifically, confirmed NOT affected**:
+both `app/admin/iacm/reports/{bnr,crb}/page.tsx` are entirely `'use
+client'` — they fetch their data via `fetch()` inside a `useEffect`,
+a plain browser-initiated request, not a server-rendered data fetch
+subject to this route segment config at all. Their underlying API
+routes (`app/api/admin/iacm/reports/{bnr,crb}/route.ts` and their
+`filed/route.ts` siblings) all use `requireAdminApi()`, which reads
+cookies for auth — per Next.js's documented behavior, a Route Handler
+using a dynamic function like `cookies()` is automatically forced into
+fully dynamic, per-request execution regardless of any `dynamic`/
+`revalidate` export. Structurally immune, not just currently unaffected.
+
+**Tested**: created a real disposable test loan after the fix — its
+disbursement journal entry appeared in the exact Journal-page query
+immediately, at position 0. Kevin independently confirmed it rendered
+on the live Journal page on first load, no refresh needed. Re-ran the
+exact query for MUGWIZA's real entry afterward too: unchanged, still
+correct, still at position 4 of 50.
+
+**Note on the investigation that followed**: after this fix, Kevin
+separately reported still not seeing MUGWIZA's specific entry render.
+An exhaustive follow-up (full field-by-field diff against neighboring
+entries that do render, duplicate-`id`/duplicate-`reference`/
+duplicate-line-`id` collision checks across the whole fetched set) found
+zero anomalies — the entry is structurally identical to ones that
+render correctly. That specific report was never resolved with a
+second code fix; it needs direct browser console/DOM evidence to go
+further, which wasn't provided before the investigation moved on to
+other real issues. Flagged here rather than silently dropped.

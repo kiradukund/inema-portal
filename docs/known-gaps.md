@@ -2212,3 +2212,58 @@ unless the computed split matched this exactly). Loan's real
 `balance_outstanding` is now 2,334.96 (down from 152,334.96),
 `principal_repaid` 1,499,465.04, `last_payment_date` 2026-07-24,
 journal entry posted and balanced (150,000 = 150,000).
+
+## Real client data found in archived CRB filings — 14 of 15 marital_status/date_of_birth gaps closed, plus a real national_id discrepancy to verify
+
+A final, comprehensive July integrity audit (journal balance/orphan/
+duplicate checks, independent KPI recompute, BNR/CRB data-readiness,
+cross-view consistency — all confirmed clean or already documented
+elsewhere) found 15 real active clients missing `marital_status` and
+`date_of_birth` — all from the 2026-08-14 bulk historical reload,
+predating the 2026-08-17 commit (`ed6b76a`) that added date_of_birth
+capture to the New Loan form. Before treating this as purely a future
+Devotha data-collection task, Kevin asked for a thorough search of
+every real source already provided tonight.
+
+Searched all 3 real historical journal file variants — including two
+sheets (`Sheet9`, `Sheet10`) that only exist in the oldest variant and
+were never used before — via a full keyword scan of every cell across
+every sheet. Zero mentions of marital status or date of birth anywhere.
+
+Then checked the two real archived CRB submission files
+(`crblC20260707001.730.xls`, `crblC20260806001.730.xls.xls`, both real
+INEMA filings) — both have a genuine "Consumer" sheet with real Marital
+Status and Date of Birth columns per the actual CRB format.
+
+**14 of 15 found**, matched by National ID. 7 matched exactly. The
+other 7 only matched once a real, unexpected discrepancy was noticed:
+`iacm_clients.national_id` agrees with the real archived filing on
+every digit except the last, which is consistently `0` in our database
+— ABAYISENGA jean claude (`...849010` vs real `...849011`), NIYITEGEKA
+Francine (`...149240` vs `...149244`), UMURORE Brigitte (`...014280`
+vs `...014287`), NKUBITO RUSAMAZA Desire Demino (`...904180` vs
+`...904188`), INDERE Serge (`...193010` vs `...193012`), NASABWE Alice
+(`...817070` vs `...817073`), Kami Girbert (`...802050` vs
+`...802059`). Seven independent IDs all losing the same final digit is
+not a coincidence — almost certainly a systematic truncation bug in the
+original bulk historical import.
+
+**Not corrected tonight, deliberately**: `national_id` is left
+completely untouched on all 14 — `national_id` is the CRB matching/
+deduplication key and feeds BNR filings too, so correcting it needs
+Kevin/Devotha to verify the real ID against each client's actual
+physical ID document first, not an assumption that the CRB file's
+version is the correct side. **Flagged here for that verification to
+happen tomorrow.**
+
+**Populated**: `marital_status`/`date_of_birth` for all 14, using the
+real values found in the archived CRB filings (git history has the
+exact per-client values and before/after). Confirmed via direct
+re-query after each update that `national_id` was left byte-for-byte
+unchanged on every one.
+
+**Not resolved**: HABIMANA Emmanuel (INEMA-2026-0001) genuinely does
+not appear in either archived CRB file's Consumer sheet under any name
+— searched exhaustively, confirmed absent. His marital_status/
+date_of_birth remain a real data-collection task requiring direct
+contact with him, not recoverable from any source already available.

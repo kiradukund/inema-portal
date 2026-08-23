@@ -39,7 +39,12 @@
 
   "nature": {
     "description": "BNR 'Nature' of credit facility — French-language codes distinguishing account type/maturity structure (current-account vs. short/medium/long-term credit, signature credit, etc.).",
-    "status": "NOT USED — deliberately excluded from lib/crb-report.ts HEADERS_OF_INTEREST. See docs/known-gaps.md entry dated 2026-08-23: INEMA's real iacm_loans.loan_type/purpose values ('Salary Advance', 'Unclassified — pending loan officer confirmation', 'individual') are not granular enough to confidently pick one of these codes.",
+    "status": "USED — see docs/known-gaps.md entry dated 2026-08-23 (second Nature/Category entry). lib/crb-report.ts natureCode() maps loan_type='Salary Advance' to code 13 (the one case specific enough for a non-catch-all code); every other loan_type falls through to the real catch-all, code 39 (AUTRES CREDITS A DECAISSEMENT).",
+    "inemaMapping": {
+      "description": "Confirmed 2026-08-23. lib/crb-report.ts LOAN_TYPE_NATURE_CODE + NATURE_CATCHALL_CODE.",
+      "Salary Advance": "13",
+      "_default (everything else, e.g. 'Unclassified — pending loan officer confirmation', 'individual')": "39"
+    },
     "codes": [
       { "code": "11", "label": "CREDIT EN COMPTE COURANT" },
       { "code": "12", "label": "ESCOMPTES D'EFFETS COMMERCIAUX" },
@@ -61,7 +66,12 @@
 
   "category": {
     "description": "BNR 'Category' of credit facility — French-language codes for the purpose/product type of the loan.",
-    "status": "NOT USED — same reasoning as Nature. See docs/known-gaps.md entry dated 2026-08-23.",
+    "status": "USED — see docs/known-gaps.md entry dated 2026-08-23 (second Nature/Category entry). lib/crb-report.ts categoryCode() maps loan_type='Salary Advance' to code 40 (CREDITS PERSONNELS); every other loan_type falls through to the real catch-all, code 39 (AUTRES CREDITS A DECAISSEMENT — the same code and label as Nature's catch-all, confirmed identical in both tables).",
+    "inemaMapping": {
+      "description": "Confirmed 2026-08-23. lib/crb-report.ts LOAN_TYPE_CATEGORY_CODE + CATEGORY_CATCHALL_CODE.",
+      "Salary Advance": "40",
+      "_default (everything else, e.g. 'Unclassified — pending loan officer confirmation', 'individual')": "39"
+    },
     "codes": [
       { "code": "10", "label": "CREDIT DE CAISSE" },
       { "code": "11", "label": "CREDIT DE FONDS DE ROULEMENT" },

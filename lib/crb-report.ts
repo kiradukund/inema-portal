@@ -48,6 +48,15 @@ const PROVINCE_BY_DISTRICT: Record<string, string> = {
 // iacm_clients.nationality/date_of_birth/occupation existed for real —
 // the New Loan form (app/admin/iacm/loans/new/page.tsx) now collects
 // all three directly from Devotha as part of recording a loan.
+// Nature and Category added 2026-08-23: confirmed both real BNR code
+// tables carry the identical catch-all code "39" (AUTRES CREDITS A
+// DECAISSEMENT / Other Disbursement Credits) — see natureCode()/
+// categoryCode() below and docs/bnr-codification-reference.json.
+// INEMA's loan_type is still too coarse to justify anything more
+// specific than that catch-all except for the one confirmed case
+// (Salary Advance), so this is no longer the "not granular enough,
+// leave blank" gap docs/known-gaps.md describes from 2026-08-23's
+// earlier entry — every loan now gets a real, defensible code.
 const HEADERS_OF_INTEREST = [
   'Salutation', 'Surname', 'Forename or Initial 1', 'Forename or Initial 2', 'Forename or Initial 3',
   'National ID Number', 'Nationality', 'Marital Status', 'Gender', 'Date of Birth', 'Occupation',
@@ -59,7 +68,7 @@ const HEADERS_OF_INTEREST = [
   'Opening Balance / Credit Limit', 'Current Balance', 'Current Balance Indicator',
   'Scheduled Monthly Payment Amount', 'Actual Payment Amount', 'Amount Past Due',
   'Installments in Arrears', 'Days in Arrears', 'Last Payment Date', 'Interest Rate',
-  'First Payment Date', 'Sector of Activity', 'Final Payment Date',
+  'First Payment Date', 'Nature', 'Category', 'Sector of Activity', 'Final Payment Date',
 ]
 
 // Real Rwandan-convention full_name is "SURNAME Forename [Forename2]
@@ -110,6 +119,37 @@ const ECONOMIC_SECTOR_TO_BNR_CODE: Record<string, string> = {
 function economicSectorCode(sector: string | null | undefined): string | undefined {
   if (!sector) return undefined
   return ECONOMIC_SECTOR_TO_BNR_CODE[sector]
+}
+
+// Nature and Category — confirmed 2026-08-23, both real BNR code
+// tables independently define code "39" as AUTRES CREDITS A
+// DECAISSEMENT (Other Disbursement Credits), sitting outside the
+// short/medium/long-term buckets each table otherwise organises around.
+// Both tables' OTHER codes (Nature 13/24/33, Category 19/20/21/22...)
+// require picking a maturity or product bucket first — 39 is the one
+// code in each table that doesn't, making it the genuine "not otherwise
+// classified" catch-all for any real disbursement credit (which every
+// INEMA loan is — none are signature/guarantee-type facilities, the
+// other family of codes these tables cover). See
+// docs/bnr-codification-reference.json for the full tables.
+const NATURE_CATCHALL_CODE = '39'
+const CATEGORY_CATCHALL_CODE = '39'
+
+// The one loan_type value specific enough for a real code more precise
+// than the catch-all: a Salary Advance is short-term (Nature 13 =
+// AUTRES CREDITS A COURT TERME) and personal-purpose (Category 40 =
+// CREDITS PERSONNELS). Every other loan_type — including "individual"
+// and "Unclassified — pending loan officer confirmation" — falls
+// through to the catch-all rather than guessing a maturity/purpose
+// bucket with no real basis.
+const LOAN_TYPE_NATURE_CODE: Record<string, string> = { 'Salary Advance': '13' }
+const LOAN_TYPE_CATEGORY_CODE: Record<string, string> = { 'Salary Advance': '40' }
+
+function natureCode(loanType: string | null | undefined): string {
+  return LOAN_TYPE_NATURE_CODE[loanType ?? ''] ?? NATURE_CATCHALL_CODE
+}
+function categoryCode(loanType: string | null | undefined): string {
+  return LOAN_TYPE_CATEGORY_CODE[loanType ?? ''] ?? CATEGORY_CATCHALL_CODE
 }
 
 function maritalCode(m: string | null | undefined): string {
@@ -343,6 +383,11 @@ function computeFieldValues(
     'Last Payment Date': toYyyymmdd(loan.last_payment_date) || undefined,
     'Interest Rate': Math.round(Number(loan.interest_rate ?? 0) * 12 * 10000) / 100,
     'First Payment Date': toYyyymmdd(loan.first_payment_date) || undefined,
+    // Fixed 2026-08-23 — see natureCode()/categoryCode() above. Was
+    // previously excluded entirely (no confident mapping existed);
+    // now every loan gets a real, defensible code via the catch-all.
+    'Nature': natureCode(loan.loan_type),
+    'Category': categoryCode(loan.loan_type),
     // Real, semantically-correct source (iacm_loans.economic_sector),
     // converted to the real BNR 4-digit code — fixed 2026-08-23; this
     // previously wrote INEMA's raw English text ("Other", "Health",

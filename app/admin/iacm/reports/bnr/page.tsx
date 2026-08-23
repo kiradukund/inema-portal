@@ -172,8 +172,8 @@ export default function BNRReportPage() {
           <div className="space-y-1.5">
             {[
               ['A1.2. FS', 'Gross loans, loan classification totals, income/expenses, gender & sector breakdowns for the selected quarter\'s column'],
-              ['A1.3. Normal Loans', 'Loans with 0 days overdue, full BNR borrower detail'],
-              ['A1.4. Watch (1-89 days)', 'Loans 1-89 days past maturity — auto-classified'],
+              ['A1.3. Normal Loans', 'Loans 0-29 days overdue, full BNR borrower detail'],
+              ['A1.4. Watch (30-89 days)', 'Loans 30-89 days past maturity — auto-classified'],
               ['A1.5. Substandard (90-179)', 'Loans 90-179 days past maturity'],
               ['A1.6. Doubtful (180-359)', 'Loans 180-359 days past maturity'],
               ['A1.7. Loss (360+ days)', 'Loans 360+ days past maturity'],

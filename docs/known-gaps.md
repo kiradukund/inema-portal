@@ -2267,3 +2267,39 @@ not appear in either archived CRB file's Consumer sheet under any name
 — searched exhaustively, confirmed absent. His marital_status/
 date_of_birth remain a real data-collection task requiring direct
 contact with him, not recoverable from any source already available.
+
+## Client-data-completeness audit — closed out, zero outstanding gaps
+
+Closing entry for the audit started above. After the July final
+integrity check surfaced 15 real active clients with missing or
+questionable data, Kevin completed real physical-document verification
+and direct client contact for every remaining item. Applied all 15,
+each looked up by phone number first to confirm the correct row, with
+a full before/after shown for review before running anything, and a
+real uniqueness check confirming none of the corrected national IDs
+collided with any other client:
+
+- **7 national_id corrections** (ABAYISENGA jean claude, NIYITEGEKA
+  Francine, UMURORE Brigitte, NKUBITO RUSAMAZA Desire Demino, INDERE
+  Serge, NASABWE Alice, Kami Girbert) — the systematic last-digit
+  discrepancy flagged earlier, now verified against each client's real
+  physical ID document and corrected.
+- **1 nationality correction** (Niwagaba james: Rwandan → Ugandan) —
+  verified against his real physical ID document; his national_id
+  (`B00243647`) was already correct and left untouched.
+- **6 occupations** (BIZIMANA Andre, TUYIZERE Felix, Aimee Marie
+  KOBISINGE, MUHORAKEYE Providence, UWAMAHORO Aline, TUYISENGE MATUTINA
+  Stella) — obtained via direct client contact, not the raw numeric
+  occupation codes found in the archived CRB files, which aren't real
+  job descriptions.
+- **HABIMANA Emmanuel's full missing record** (marital_status,
+  date_of_birth, occupation) — obtained via direct contact, the one
+  client whose data was genuinely unrecoverable from any archived
+  source.
+
+All sourced from real verification, not assumed or guessed. Confirmed
+via direct re-query after applying: all 7 corrected national IDs are
+unique with exactly one owner each. This closes the client-data-
+completeness thread from tonight's final integrity check — every
+currently active real client now has a complete record, zero
+outstanding gaps.

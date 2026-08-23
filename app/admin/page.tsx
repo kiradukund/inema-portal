@@ -135,11 +135,17 @@ export default async function AdminDashboard() {
     .reduce((s, p) => s + Number(p.interest_portion ?? 0), 0)
 
   // ── Loan portfolio classification (BNR-style buckets), IACM loans only ──
+  // Day boundaries fixed 2026-08-23 to match the real BNR CLASSIFICATION
+  // table (see docs/bnr-codification-reference.json and docs/known-gaps.md):
+  // Normal has a real 0-29 day grace window before Watch starts at day 30.
+  // This mirrors the same fix already applied to lib/crb-report.ts's
+  // classifyByDays() — this chart had the identical bug independently,
+  // since it's a separate implementation, not a shared function.
   const iacmWithRisk = allIacmLoans.filter(l => Number(l.balance_outstanding ?? 0) > 0)
   const dayBucket = (l: any) => getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), today)
   const portfolioBuckets = [
-    { label: 'Normal', count: iacmWithRisk.filter(l => dayBucket(l) === 0).length, color: '#16a34a' },
-    { label: 'Watch (1-89d)', count: iacmWithRisk.filter(l => { const d = dayBucket(l); return d >= 1 && d < 90 }).length, color: '#d97706' },
+    { label: 'Normal (0-29d)', count: iacmWithRisk.filter(l => { const d = dayBucket(l); return d >= 0 && d <= 29 }).length, color: '#16a34a' },
+    { label: 'Watch (30-89d)', count: iacmWithRisk.filter(l => { const d = dayBucket(l); return d >= 30 && d < 90 }).length, color: '#d97706' },
     { label: 'Substandard (90-179d)', count: iacmWithRisk.filter(l => { const d = dayBucket(l); return d >= 90 && d < 180 }).length, color: '#ea580c' },
     { label: 'Doubtful (180-359d)', count: iacmWithRisk.filter(l => { const d = dayBucket(l); return d >= 180 && d < 360 }).length, color: '#dc2626' },
     { label: 'Loss (360+d)', count: iacmWithRisk.filter(l => dayBucket(l) >= 360).length, color: '#7f1d1d' },

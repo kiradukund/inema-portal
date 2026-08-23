@@ -2303,3 +2303,125 @@ unique with exactly one owner each. This closes the client-data-
 completeness thread from tonight's final integrity check — every
 currently active real client now has a complete record, zero
 outstanding gaps.
+
+## BNR/CRB codification reference — real code tables sourced, two real bugs fixed, Nature/Category/Occupation stay intentionally unused
+
+**2026-08-23.** Kevin provided three real official BNR/CRB reference
+documents (all previously only on his Desktop): "data specification
+doc 1.9" (the official TransUnion Rwanda Data Specification v1.9),
+"BNR CODIFICATION New template.xls", and "Codification BNR 29 april
+2010". Read all three in full to cross-check what `lib/crb-report.ts`
+already assumes about Classification, and to check whether Nature,
+Category, Sector of Activity, and Occupation — all real CRB fields
+this generator has never had a source for — now have one.
+
+**Documents preserved, not just extracted from.** These are real,
+regularly-needed reference documents, not one-time source material:
+
+- `docs/reference/bnr-codification/transunion-data-specification-v1.9.pdf`
+  (758 KB) and `codification-bnr-2010-04-29.xls` (39 KB) — committed
+  directly to the repo; combined size is small enough not to
+  meaningfully bloat it.
+- "BNR CODIFICATION New template.xls" is 2.9 MB — too large to commit
+  directly (would sit in git history forever). Uploaded instead to
+  Supabase Storage, new private bucket `reference-documents`, path
+  `bnr-codification/bnr-codification-new-template.xls` — same pattern
+  already used for `crb-filed-reports`/`bnr-filed-reports`. Verified
+  with a byte-for-byte round-trip download after upload.
+- All four real code tables (Classification, Nature, Category, Sector
+  of Activity) extracted into `docs/bnr-codification-reference.json`,
+  each with a `sourceNote` citing exactly which document(s) confirm it
+  and what its current usage status is — including the two that stay
+  unused, so nobody has to re-open the source documents just to see
+  what a code means.
+
+**Bug #1 — Classification day-boundaries.** `classifyByDays()` treated
+any `days > 0` as class 2 (Watch), skipping class 1 (Normal) entirely.
+The real BNR "CLASSIFICATION" sheet (cross-checked against the
+TransUnion spec, which independently confirms the same 1-6 label
+order) gives Normal a real 0-29 day grace window, with Watch only
+starting at day 30. Fixed: `classifyByDays()` now returns 1 for
+`days <= 29`. Checked which real active loans this actually changes
+today (2026-08-23, live data): **3 loans** move from Watch (2) to
+Normal (1) — BIZIMANA Andre (INEMA-2026-0003, 14 days), TUYIZERE Felix
+(INEMA-2026-0013, 22 days), and Aimee Marie KOBISINGE (INEMA-2026-0014,
+1 day). No other loan's classification is affected by this specific
+fix (a handful of others differ from what's in the most recent archived
+file too, but that's the generator's normal monthly refresh doing its
+job on stale data, unrelated to this bug).
+
+**Bug #2 — Sector of Activity was writing raw English text.** The real
+CRB field expects one of the BNR's own 4-digit sector codes (e.g.
+`9200` = Health And Related Services), not free text. The generator
+was writing `iacm_loans.economic_sector` verbatim ("Other", "Health",
+"Commerce & Trade") straight into the CRB file — a real, live bug that
+was inert only because `economic_sector` was null for every loan until
+the 7 newest ones (INEMA-2026-0022 through 0028) started populating it.
+Fixed: added `economicSectorCode()`, a confirmed real mapping (`Other`
+→ `0001`, `Health` → `9200`, `Commerce & Trade` → `6000`) sourced from
+`docs/bnr-codification-reference.json`. Verified against real live
+data: all 7 loans with `economic_sector` set now produce the correct
+numeric code. Also confirmed, by running the real patcher functions
+against the actual most-recently-archived file, that two clients who
+already had real hand-entered sector codes sitting in that file
+(`9300`, `0001` — from before this field was ever in the generator's
+touched-column list) are correctly left untouched when this
+generator's own computed value is absent, per the generator's existing
+"never clear what a human entered" design.
+
+**Nature, Category, and Occupation — confirmed real sources, left
+unused, and why.** All three now have a confirmed real code table
+(preserved above), but none of INEMA's current data is granular enough
+to map with confidence:
+
+- **Nature** (11-49, e.g. `13`=AUTRES CREDITS A COURT TERME) and
+  **Category** (10-90, e.g. `40`=CREDITS PERSONNELS) both distinguish
+  real structural properties of the credit facility (current-account
+  vs. term, maturity length, purpose) that `iacm_loans.loan_type`/
+  `purpose` were never designed to capture — real values today are
+  "Salary Advance", "Unclassified — pending loan officer
+  confirmation", and "individual" (the last one looks like a
+  client-type value that ended up in the wrong field). None map
+  confidently to a single code. Left blank, per Kevin's explicit
+  instruction to prefer blank over a wrong guess.
+- **Occupation** has a real 645-row ISCO-08-based code table (sheet
+  "occupation" in the template). Checked against real client
+  `occupation` values: "other" maps cleanly to code `99`, but
+  "commerce" is too vague for one code, "doctor" is ambiguous between
+  two codes, and "bnr"/"Bank of africa" are actually employer names
+  that ended up in the occupation field, not occupations at all —
+  this field's real data needs cleanup at the source before any
+  auto-mapping would be trustworthy. Left as free text, unchanged.
+
+**Tested** against real live data (not a disposable scenario — this
+generator's real behavior only shows up against the real active-loan
+book): fetched all 22 real active loans, built real target field
+values with the fixed code, and ran the actual exported patcher
+functions (`readConsumerRoster`, `applyRowFieldUpdates`,
+`applyRowInsertion`, `runStage5RowRemoval`) against the real most-
+recently-archived CRB file (`CRBTT20260817001.730.xls`) — the exact
+same code path `generateCrbReport()` uses. Deliberately did NOT call
+`generateCrbReport()` itself, since it always archives its output as a
+new real filed report (a permanent Storage object + `iacm_crb_filed_reports`
+row) with no dry-run option — running it today would have created an
+extra, un-requested "filing" dated 2026-08-23 alongside the real
+monthly cycle. All patching completed with no thrown error (the
+patcher's duplicate-cell-coordinate self-check runs on every stage and
+throws on failure, so a clean run is itself proof of zero duplicates).
+The resulting file was written locally only, confirmed to open cleanly
+via the `xlsx` library (all 7 real sheets present, Consumer sheet row
+count exactly matches 22 active loans + header), confirmed to have the
+correct real OLE/CFB signature, and confirmed to carry no
+`Zone.Identifier` alternate data stream (the actual cause of Windows'
+"Protected View" — an unrelated, unavoidable side effect of browser
+downloads that would apply identically with or without this fix, not
+something the generator itself controls).
+
+**Also noticed, not touched**: `app/admin/iacm/reports/bnr/page.tsx`
+displays "Watch (1-89 days)" as descriptive report-section text for
+the BNR report — the same wrong boundary this fix corrects in CRB's
+actual classification logic. Left alone since it's pure display copy
+in a report that classifies every loan as Normal by deliberate policy
+regardless of days (see `lib/bnr-report.ts`), and wasn't part of what
+was asked — flagged here in case it's worth a documentation-only fix
+later.

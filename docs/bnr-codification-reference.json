@@ -1,0 +1,116 @@
+{
+  "_provenance": {
+    "purpose": "Real BNR/CRB codification tables, extracted and preserved so lib/crb-report.ts (and any future BNR/CRB work) can cite real codes instead of leaving fields blank or guessing. Built 2026-08-23 during a full read-through of all three official source documents.",
+    "sources": [
+      {
+        "id": "transunion-v1.9",
+        "title": "TransUnion Rwanda Data Specification Document, Version 1.9 (01/01/2018)",
+        "preservedAt": "docs/reference/bnr-codification/transunion-data-specification-v1.9.pdf",
+        "note": "Official CRB data-submission spec. Confirms Classification labels/order (page 14, Consumer; page 24, Corporate) and the full Nature/Category code tables (pages 17-19, 27-29). Does not itself list Classification day-boundaries or the Sector of Activity code table."
+      },
+      {
+        "id": "bnr-codification-2010",
+        "title": "Codification BNR 29 april 2010",
+        "preservedAt": "docs/reference/bnr-codification/codification-bnr-2010-04-29.xls",
+        "note": "Older BNR reference workbook. Sheets: CREDIT NATURES, Credit Category, ACTIVITY SECTORS, CLASSES, payment frequencies. Read directly by Kevin; cross-checked against the other two sources rather than re-extracted by script."
+      },
+      {
+        "id": "bnr-template",
+        "title": "BNR CODIFICATION New template.xls",
+        "preservedAt": "Supabase Storage, bucket 'reference-documents', path 'bnr-codification/bnr-codification-new-template.xls' (NOT committed to git — 2.9MB binary; see docs/known-gaps.md entry dated 2026-08-23 for why)",
+        "note": "Newest, most complete reference workbook. Sheets used here: CLASSIFICATION, occupation, legal status, loan Category, sector of activity, consu revised (the real Consumer field spec — confirms Occupation and Sector of Activity both say 'consider the list provided', i.e. these sheets are the intended code source)."
+      }
+    ]
+  },
+
+  "classification": {
+    "description": "BNR/CRB loan classification by days in arrears. Used live by lib/crb-report.ts classifyByDays().",
+    "status": "USED — see fix dated 2026-08-23 in docs/known-gaps.md (day-boundary bug: days 1-29 were incorrectly falling into Watch instead of Normal)",
+    "codes": [
+      { "code": 1, "label": "NORMAL RISK", "daysMin": 0, "daysMax": 29 },
+      { "code": 2, "label": "WATCH", "daysMin": 30, "daysMax": 89 },
+      { "code": 3, "label": "SUBSTANDARD", "daysMin": 90, "daysMax": 179 },
+      { "code": 4, "label": "DOUBTFUL", "daysMin": 180, "daysMax": 359 },
+      { "code": 5, "label": "LOSS", "daysMin": 360, "daysMax": null },
+      { "code": 6, "label": "WRITE OFF", "daysMin": null, "daysMax": null, "note": "Administrative sub-designation of Loss (code 5) per the source sheet ('360 being in class 5') — not derivable from days in arrears alone; requires an explicit write-off decision. Never auto-assigned by classifyByDays()." }
+    ],
+    "sourceNote": "Day boundaries from bnr-template, sheet 'CLASSIFICATION'. That sheet's Substandard row literally reads '90 - 189', which would overlap Doubtful's '180-359' start by 10 days — treated here as a typo for '90-179' for continuity with the adjacent rows. Label text and 1-6 ordering independently confirmed against transunion-v1.9 (Consumer p.14 and Corporate p.24, both list 1=NORMAL RISK...6=WRITE OFF) — this resolved an apparent order discrepancy in Kevin's own paraphrase of bnr-codification-2010, which is treated as a recollection slip rather than a genuine third variant, since the two more detailed/recent sources agree with each other exactly."
+  },
+
+  "nature": {
+    "description": "BNR 'Nature' of credit facility — French-language codes distinguishing account type/maturity structure (current-account vs. short/medium/long-term credit, signature credit, etc.).",
+    "status": "NOT USED — deliberately excluded from lib/crb-report.ts HEADERS_OF_INTEREST. See docs/known-gaps.md entry dated 2026-08-23: INEMA's real iacm_loans.loan_type/purpose values ('Salary Advance', 'Unclassified — pending loan officer confirmation', 'individual') are not granular enough to confidently pick one of these codes.",
+    "codes": [
+      { "code": "11", "label": "CREDIT EN COMPTE COURANT" },
+      { "code": "12", "label": "ESCOMPTES D'EFFETS COMMERCIAUX" },
+      { "code": "13", "label": "AUTRES CREDITS A COURT TERME" },
+      { "code": "21", "label": "HABITAT A MOYEN TERME" },
+      { "code": "22", "label": "VEHICULES UTILITAIRES A MOYEN TERME" },
+      { "code": "23", "label": "AUTRES EQUIPEMENTS A MOYEN TERME" },
+      { "code": "24", "label": "AUTRES CREDITS A MOYEN TERME" },
+      { "code": "31", "label": "HABITAT A LONG TERME" },
+      { "code": "32", "label": "EQUIPEMENT A LONG TERME" },
+      { "code": "33", "label": "AUTRES CREDITS A LONG TERME" },
+      { "code": "39", "label": "AUTRES CREDITS A DECAISSEMENT" },
+      { "code": "41", "label": "CREDOCS" },
+      { "code": "42", "label": "AVALS, CAUTIONS, ACCEPTATIONS" },
+      { "code": "49", "label": "AUTRES CREDITS DE SIGNATURE" }
+    ],
+    "sourceNote": "Confirmed identical between transunion-v1.9 (pages 17 and 27) and Kevin's read of bnr-codification-2010."
+  },
+
+  "category": {
+    "description": "BNR 'Category' of credit facility — French-language codes for the purpose/product type of the loan.",
+    "status": "NOT USED — same reasoning as Nature. See docs/known-gaps.md entry dated 2026-08-23.",
+    "codes": [
+      { "code": "10", "label": "CREDIT DE CAISSE" },
+      { "code": "11", "label": "CREDIT DE FONDS DE ROULEMENT" },
+      { "code": "19", "label": "CREDIT DE DESSAISISSEMENT" },
+      { "code": "20", "label": "CREDIT DE STOCKAGE" },
+      { "code": "21", "label": "CREDIT D'ESCOMPTE" },
+      { "code": "22", "label": "CREDIT-RELAIS" },
+      { "code": "23", "label": "CREDOC IMPAYE" },
+      { "code": "30", "label": "CREDIT DE SOUDURE" },
+      { "code": "31", "label": "CREDIT DE FAIRE-VALOIR" },
+      { "code": "33", "label": "CREDIT D'EMBOUCHE" },
+      { "code": "34", "label": "CREDIT DE CAMPAGNE" },
+      { "code": "39", "label": "AUTRES CREDITS A DECAISSEMENT" },
+      { "code": "40", "label": "CREDITS PERSONNELS" },
+      { "code": "50", "label": "CREDIT VEHICULE" },
+      { "code": "60", "label": "PRETS HYPOTHECAIRES" },
+      { "code": "64", "label": "LEASING IMMOBILIER" },
+      { "code": "68", "label": "LEASING MOBILIER" },
+      { "code": "70", "label": "CREDIT D'INVESTISSEMENT" },
+      { "code": "80", "label": "CREDIT DOCUMENTAIRE" },
+      { "code": "82", "label": "LA CAUTION" },
+      { "code": "83", "label": "L'AVAL" },
+      { "code": "84", "label": "L'ACCEPTATION" },
+      { "code": "89", "label": "AUTRE CREDIT DE SIGNATURE" }
+    ],
+    "sourceNote": "Confirmed identical between transunion-v1.9 (pages 18 and 28) and bnr-template sheet 'loan Category'. bnr-template additionally uses the English label 'Personal Loan' for code 40 and 'Cash Advance' for code 10 — kept the French labels here since they're what both spec documents use verbatim."
+  },
+
+  "sectorOfActivity": {
+    "description": "BNR 4-digit hierarchical economic sector classification (ECONOMIC_SECTOR_L1/L2/L3/SUB). Top-level (L1) codes shown here in full; the complete 4-level, 77-row hierarchy (finer sub-sectors, e.g. 1111=Agriculture For Coffee Exports) lives in the preserved source documents, not duplicated here.",
+    "status": "USED — see fix dated 2026-08-23 in docs/known-gaps.md. lib/crb-report.ts now maps iacm_loans.economic_sector text to one of these L1 codes instead of writing the raw English text into the CRB file.",
+    "l1Codes": [
+      { "code": "0001", "label": "ACTIVITIES NOT CLASSIFIED ELSEWHERE" },
+      { "code": "1000", "label": "Agriculture, Livestock, Forestry and Fishing" },
+      { "code": "2000", "label": "Mining Activities" },
+      { "code": "3000", "label": "Manufacturing Industries" },
+      { "code": "4000", "label": "Energy And Water" },
+      { "code": "5000", "label": "Public Works And Construction" },
+      { "code": "6000", "label": "Trade, Restaurants And Hotels" },
+      { "code": "7000", "label": "Transports, Warehouse And Communications" },
+      { "code": "8000", "label": "OFI And Insurance" },
+      { "code": "9000", "label": "Services Sector Community Services Provision" }
+    ],
+    "inemaMapping": {
+      "description": "Confirmed 2026-08-23 mapping from INEMA's current iacm_loans.economic_sector free-text values to the real L1 code, used directly by lib/crb-report.ts.",
+      "Other": "0001",
+      "Health": "9200",
+      "Commerce & Trade": "6000"
+    },
+    "sourceNote": "L1 table from bnr-template sheet 'sector of activity', confirmed matching the 'ACTIVITY SECTORS' table Kevin read in bnr-codification-2010. 'Health' maps to 9200 (L2 'Health And Related Services' under L1 9000), not the bare L1 9000, since it's specific enough to use the finer code. transunion-v1.9 lists this field as Text, max length 2 (pages 19, 29) — that's inconsistent with the real 4-digit codes in both codification sources and is almost certainly a copy-paste leftover from the adjacent Nature/Category rows (which genuinely are 2-digit); the 4-digit codes are used here since they're what both dedicated codification documents actually define."
+  }
+}

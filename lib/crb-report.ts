@@ -95,6 +95,23 @@ function salutationCode(g: string | null | undefined): string {
   return ''
 }
 
+// Maps INEMA's free-text iacm_loans.economic_sector to the real BNR
+// 4-digit sector code — see docs/bnr-codification-reference.json
+// ("sectorOfActivity.inemaMapping"), confirmed 2026-08-23 against the
+// real BNR codification sources. Unmapped/unrecognised text (a future
+// economic_sector value not in this list) is left blank rather than
+// guessed, same policy as Nature/Category.
+const ECONOMIC_SECTOR_TO_BNR_CODE: Record<string, string> = {
+  'Other': '0001',
+  'Health': '9200',
+  'Commerce & Trade': '6000',
+}
+
+function economicSectorCode(sector: string | null | undefined): string | undefined {
+  if (!sector) return undefined
+  return ECONOMIC_SECTOR_TO_BNR_CODE[sector]
+}
+
 function maritalCode(m: string | null | undefined): string {
   switch ((m ?? '').toLowerCase()) {
     case 'married': return 'M'
@@ -105,16 +122,28 @@ function maritalCode(m: string | null | undefined): string {
   }
 }
 
-// 1=Normal, 2=Watch(1-89d), 3=Substandard(90-179d), 4=Doubtful(180-359d),
-// 5=Loss(360+d) — the same day thresholds already used in the BNR UI's
-// own sheet descriptions (app/admin/iacm/reports/bnr/page.tsx). Unlike
-// BNR, which defaults every loan to Normal by deliberate policy (real
-// filed BNR practice — see lib/bnr-report.ts), CRB computes this for
-// real: Kevin's explicit decision, based on real evidence that at least
-// one real CRB filing (Muhorakeye Providence, Jul-2026) reported genuine
-// non-Normal arrears.
+// 1=Normal(0-29d), 2=Watch(30-89d), 3=Substandard(90-179d),
+// 4=Doubtful(180-359d), 5=Loss(360+d) — real day boundaries per the
+// BNR "CLASSIFICATION" sheet, cross-checked against the TransUnion
+// Rwanda Data Specification v1.9 for label order — see
+// docs/bnr-codification-reference.json ("classification") for full
+// sourcing. Fixed 2026-08-23: this previously put any days > 0
+// straight into Watch, skipping the real 29-day Normal grace window —
+// see docs/known-gaps.md for which real loans that changed.
+// NOTE: app/admin/iacm/reports/bnr/page.tsx still displays "Watch
+// (1-89 days)" as descriptive report-section text — that's pure
+// display copy in the BNR report (which classifies every loan as
+// Normal by deliberate policy regardless of days, per lib/bnr-report.ts)
+// and was left untouched, but it now describes the same wrong boundary
+// this function used to use.
+//
+// Unlike BNR, which defaults every loan to Normal by deliberate policy
+// (real filed BNR practice — see lib/bnr-report.ts), CRB computes this
+// for real: Kevin's explicit decision, based on real evidence that at
+// least one real CRB filing (Muhorakeye Providence, Jul-2026) reported
+// genuine non-Normal arrears.
 function classifyByDays(days: number): number {
-  if (days <= 0) return 1
+  if (days <= 29) return 1
   if (days <= 89) return 2
   if (days <= 179) return 3
   if (days <= 359) return 4
@@ -314,12 +343,13 @@ function computeFieldValues(
     'Last Payment Date': toYyyymmdd(loan.last_payment_date) || undefined,
     'Interest Rate': Math.round(Number(loan.interest_rate ?? 0) * 12 * 10000) / 100,
     'First Payment Date': toYyyymmdd(loan.first_payment_date) || undefined,
-    // Real, semantically-correct source (iacm_loans.economic_sector) —
-    // confirmed 2026-08-17 to be null for every real loan today, so this
-    // is currently inert (produces no visible cell either way), but
-    // starts populating automatically the moment loan officers begin
-    // recording it, with no further generator change needed.
-    'Sector of Activity': loan.economic_sector || undefined,
+    // Real, semantically-correct source (iacm_loans.economic_sector),
+    // converted to the real BNR 4-digit code — fixed 2026-08-23; this
+    // previously wrote INEMA's raw English text ("Other", "Health",
+    // "Commerce & Trade") straight into the CRB file, which isn't a
+    // valid value for this field. See economicSectorCode() above and
+    // docs/bnr-codification-reference.json.
+    'Sector of Activity': economicSectorCode(loan.economic_sector),
     'Final Payment Date': toYyyymmdd(loan.maturity_date) || undefined,
   }
 

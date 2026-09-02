@@ -1,5 +1,6 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient } from '@/lib/supabase'
+import { getDaysOverdue, classifyByDays, BNR_CLASS_LABEL, type BnrClass } from '@/lib/calculator'
 import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
@@ -20,14 +21,22 @@ export default async function LoanPortfolio() {
   const all = loans ?? []
   const today = new Date()
 
+  // Day-boundary rule comes from the single shared classifyByDays() in
+  // lib/calculator.ts (Normal 0-29 / Watch 30-89 / Substandard 90-179 /
+  // Doubtful 180-359 / Loss 360+). This page had its own copy that never got
+  // the 2026-08-23 fix — any loan 1-29 days overdue showed "Watch" here while
+  // the dashboard chart and CRB generator correctly showed "Normal".
+  const BNR_CLASS_BADGE: Record<BnrClass, string> = {
+    1: 'bg-green-100 text-green-700',
+    2: 'bg-amber-100 text-amber-700',
+    3: 'bg-orange-100 text-orange-700',
+    4: 'bg-red-100 text-red-700',
+    5: 'bg-red-200 text-red-900',
+  }
   function getBNRClass(maturityDate: string, balance: number) {
     if (balance <= 0) return { label: 'Completed', color: 'bg-blue-100 text-blue-700' }
-    const days = Math.floor((today.getTime() - new Date(maturityDate).getTime()) / 86400000)
-    if (days <= 0)  return { label: 'Normal', color: 'bg-green-100 text-green-700' }
-    if (days < 90)  return { label: 'Watch', color: 'bg-amber-100 text-amber-700' }
-    if (days < 180) return { label: 'Substandard', color: 'bg-orange-100 text-orange-700' }
-    if (days < 360) return { label: 'Doubtful', color: 'bg-red-100 text-red-700' }
-    return { label: 'Loss', color: 'bg-red-200 text-red-900' }
+    const cls = classifyByDays(getDaysOverdue(maturityDate, balance, today))
+    return { label: BNR_CLASS_LABEL[cls], color: BNR_CLASS_BADGE[cls] }
   }
 
   return (

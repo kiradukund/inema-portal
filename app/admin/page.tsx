@@ -1,6 +1,7 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient, createAdminClient } from '@/lib/supabase'
 import { getAccountBalance, getAccountMovementSum } from '@/lib/ledger'
+import { classifyByDays, BNR_CLASS_RANGE_LABEL, type BnrClass } from '@/lib/calculator'
 import { NET_PROFIT_CUTOFF, NET_PROFIT_BASE_AS_OF_CUTOFF, LIABILITY_EXPENSE_CATEGORIES } from '@/lib/net-profit'
 import Link from 'next/link'
 import { MonthlyCollectionsChart, LoanPortfolioDonut } from './DashboardCharts'
@@ -135,21 +136,19 @@ export default async function AdminDashboard() {
     .reduce((s, p) => s + Number(p.interest_portion ?? 0), 0)
 
   // ── Loan portfolio classification (BNR-style buckets), IACM loans only ──
-  // Day boundaries fixed 2026-08-23 to match the real BNR CLASSIFICATION
-  // table (see docs/bnr-codification-reference.json and docs/known-gaps.md):
-  // Normal has a real 0-29 day grace window before Watch starts at day 30.
-  // This mirrors the same fix already applied to lib/crb-report.ts's
-  // classifyByDays() — this chart had the identical bug independently,
-  // since it's a separate implementation, not a shared function.
+  // Day boundaries come from the single shared classifyByDays() in
+  // lib/calculator.ts (Normal 0-29 / Watch 30-89 / Substandard 90-179 /
+  // Doubtful 180-359 / Loss 360+) — the same helper the CRB generator and
+  // the Loan Portfolio page use, so this chart can't drift from them again
+  // (it carried the identical day-boundary bug independently before 2026-08-23).
   const iacmWithRisk = allIacmLoans.filter(l => Number(l.balance_outstanding ?? 0) > 0)
   const dayBucket = (l: any) => getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), today)
-  const portfolioBuckets = [
-    { label: 'Normal (0-29d)', count: iacmWithRisk.filter(l => { const d = dayBucket(l); return d >= 0 && d <= 29 }).length, color: '#16a34a' },
-    { label: 'Watch (30-89d)', count: iacmWithRisk.filter(l => { const d = dayBucket(l); return d >= 30 && d < 90 }).length, color: '#d97706' },
-    { label: 'Substandard (90-179d)', count: iacmWithRisk.filter(l => { const d = dayBucket(l); return d >= 90 && d < 180 }).length, color: '#ea580c' },
-    { label: 'Doubtful (180-359d)', count: iacmWithRisk.filter(l => { const d = dayBucket(l); return d >= 180 && d < 360 }).length, color: '#dc2626' },
-    { label: 'Loss (360+d)', count: iacmWithRisk.filter(l => dayBucket(l) >= 360).length, color: '#7f1d1d' },
-  ]
+  const BUCKET_COLOR: Record<BnrClass, string> = { 1: '#16a34a', 2: '#d97706', 3: '#ea580c', 4: '#dc2626', 5: '#7f1d1d' }
+  const portfolioBuckets = ([1, 2, 3, 4, 5] as BnrClass[]).map(cls => ({
+    label: BNR_CLASS_RANGE_LABEL[cls],
+    count: iacmWithRisk.filter(l => classifyByDays(dayBucket(l)) === cls).length,
+    color: BUCKET_COLOR[cls],
+  }))
 
   // ── Monthly collections, last 6 months ──────────────────────────────────
   // Real bug, found 2026-08-17: this used to build the filter key via

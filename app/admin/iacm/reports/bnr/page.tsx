@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect } from 'react'
+import { BNR_CLASS_DAY_RANGE } from '@/lib/calculator'
 
 const QUARTERS = [
   { value: 'Q1-2026', label: 'Q1 2026 (January — March 2026)' },
@@ -172,11 +173,11 @@ export default function BNRReportPage() {
           <div className="space-y-1.5">
             {[
               ['A1.2. FS', 'Gross loans, loan classification totals, income/expenses, gender & sector breakdowns for the selected quarter\'s column'],
-              ['A1.3. Normal Loans', 'Loans 0-29 days overdue, full BNR borrower detail'],
-              ['A1.4. Watch (30-89 days)', 'Loans 30-89 days past maturity — auto-classified'],
-              ['A1.5. Substandard (90-179)', 'Loans 90-179 days past maturity'],
-              ['A1.6. Doubtful (180-359)', 'Loans 180-359 days past maturity'],
-              ['A1.7. Loss (360+ days)', 'Loans 360+ days past maturity'],
+              [`A1.3. Normal Loans`, `Loans ${BNR_CLASS_DAY_RANGE[1]} days overdue, full BNR borrower detail`],
+              [`A1.4. Watch (${BNR_CLASS_DAY_RANGE[2]} days)`, `Loans ${BNR_CLASS_DAY_RANGE[2]} days past maturity — auto-classified`],
+              [`A1.5. Substandard (${BNR_CLASS_DAY_RANGE[3]})`, `Loans ${BNR_CLASS_DAY_RANGE[3]} days past maturity`],
+              [`A1.6. Doubtful (${BNR_CLASS_DAY_RANGE[4]})`, `Loans ${BNR_CLASS_DAY_RANGE[4]} days past maturity`],
+              [`A1.7. Loss (${BNR_CLASS_DAY_RANGE[5]} days)`, `Loans ${BNR_CLASS_DAY_RANGE[5]} days past maturity`],
             ].map(([sheet, desc]) => (
               <div key={sheet} className="flex items-start gap-2">
                 <span className="text-green-500 text-xs mt-0.5">✓</span>

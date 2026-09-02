@@ -1,5 +1,5 @@
 import { createAdminClient } from './supabase'
-import { getDaysOverdue, MONTHLY_INTEREST_RATE } from './calculator'
+import { getDaysOverdue, MONTHLY_INTEREST_RATE, classifyByDays } from './calculator'
 import { readConsumerRoster, applyRowFieldUpdates, applyRowInsertion, runStage5RowRemoval } from './crb-biff8-patcher'
 
 // Fills the REAL CRB "Consumer" sheet with a fresh snapshot of every
@@ -162,33 +162,16 @@ function maritalCode(m: string | null | undefined): string {
   }
 }
 
-// 1=Normal(0-29d), 2=Watch(30-89d), 3=Substandard(90-179d),
-// 4=Doubtful(180-359d), 5=Loss(360+d) — real day boundaries per the
-// BNR "CLASSIFICATION" sheet, cross-checked against the TransUnion
-// Rwanda Data Specification v1.9 for label order — see
-// docs/bnr-codification-reference.json ("classification") for full
-// sourcing. Fixed 2026-08-23: this previously put any days > 0
-// straight into Watch, skipping the real 29-day Normal grace window —
-// see docs/known-gaps.md for which real loans that changed.
-// NOTE: app/admin/iacm/reports/bnr/page.tsx still displays "Watch
-// (1-89 days)" as descriptive report-section text — that's pure
-// display copy in the BNR report (which classifies every loan as
-// Normal by deliberate policy regardless of days, per lib/bnr-report.ts)
-// and was left untouched, but it now describes the same wrong boundary
-// this function used to use.
-//
+// Loan classification by days in arrears — 1=Normal(0-29d) .. 5=Loss(360+d).
+// The day-boundary rule now lives in ONE place, lib/calculator.ts's
+// classifyByDays() (imported above), shared with the dashboard portfolio
+// chart, the Loan Portfolio page, and the BNR report page's descriptive
+// copy — see that function's comment and docs/bnr-codification-reference.json.
 // Unlike BNR, which defaults every loan to Normal by deliberate policy
 // (real filed BNR practice — see lib/bnr-report.ts), CRB computes this
 // for real: Kevin's explicit decision, based on real evidence that at
 // least one real CRB filing (Muhorakeye Providence, Jul-2026) reported
 // genuine non-Normal arrears.
-function classifyByDays(days: number): number {
-  if (days <= 29) return 1
-  if (days <= 89) return 2
-  if (days <= 179) return 3
-  if (days <= 359) return 4
-  return 5
-}
 
 // Pure Y/M/D formatting off UTC getters — safe here specifically because
 // the inputs are either (a) Postgres `date` columns, which arrive as

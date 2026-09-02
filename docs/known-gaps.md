@@ -2425,3 +2425,90 @@ in a report that classifies every loan as Normal by deliberate policy
 regardless of days (see `lib/bnr-report.ts`), and wasn't part of what
 was asked — flagged here in case it's worth a documentation-only fix
 later.
+
+**Update, 2026-08-23 (commit `d96a9bc`):** that BNR-page display copy
+*was* corrected the same day — "Watch (1-89 days)" → "Watch (30-89
+days)", Normal → "0-29 days". The note above is kept for history but is
+resolved; see the 2026-09-02 entry below for the follow-on consolidation.
+
+## Loan classification day-boundary rule: a 4th independent copy found and the whole rule consolidated into one shared helper
+
+**Found & fixed:** 2026-09-02, during the Weekly INEMA Deep Check's
+"same-rule-multiple-places re-check". The 2026-08-23 work fixed the
+Normal 0-29 / Watch 30-89 boundary in three places
+(`lib/crb-report.ts` `classifyByDays()`, `app/admin/page.tsx`'s
+portfolio chart, and — commit `d96a9bc` — the BNR report page's
+display copy). This session found a **fourth** independent copy that
+the 2026-08-23 pass missed:
+
+**`app/admin/iacm/loans/page.tsx`'s `getBNRClass()`** (untouched since
+its original 2026-07-16 commit `111838b`, predating the whole
+codification study) still used the pre-fix rule: `if (days <= 0)
+Normal; if (days < 90) Watch; ...` — i.e. **any loan 1-29 days past
+maturity was labelled "Watch" on the Loan Portfolio table**, while the
+dashboard chart and the CRB generator correctly called it "Normal".
+Likely missed because commit `b8dd27d` — "Fix Loan Portfolio
+Classification day-boundary bug on main dashboard" — sounds like it
+covered this page but only touched `app/admin/page.tsx` (the dashboard).
+
+**Blast radius: display-only.** `getBNRClass()` feeds one coloured
+badge in the Loan Portfolio admin table. It does NOT feed the BNR or
+CRB generated files (`lib/bnr-report.ts` defaults every loan to Normal
+by policy; `lib/crb-report.ts` uses its own `classifyByDays`). No
+regulatory filing was ever affected. It was a real internal
+contradiction (two admin screens disagreeing) and a latent trap for
+any future wiring of real day-count classification.
+
+**Live check, 2026-09-02:** 3 of 22 currently-outstanding loans had a
+wrong badge on the Loan Portfolio page — BIZIMANA Andre
+(INEMA-2026-0003, 24 days), Aimee Marie KOBISINGE (INEMA-2026-0014, 11
+days), MUHORAKEYE Providence (INEMA-2026-0007, 6 days) — all showing
+"Watch", all correctly "Normal" under the real rule. (TUYIZERE Felix,
+INEMA-2026-0013, was 22 days / Normal on 2026-08-23 but is 32 days /
+genuinely "Watch" as of 2026-09-02 — the rule working, not a bug.)
+
+**Fix — one shared source of truth.** `lib/calculator.ts` now exports
+`classifyByDays(days): BnrClass` plus `BNR_CLASS_LABEL`,
+`BNR_CLASS_DAY_RANGE`, and `BNR_CLASS_RANGE_LABEL`. All four sites were
+rewritten to call it (the BNR report page uses the `BNR_CLASS_DAY_RANGE`
+constants in its descriptive strings). `lib/crb-report.ts`'s local
+`classifyByDays` was deleted in favour of the import. Behaviour is
+identical to the post-2026-08-23 rule at every site — this is pure
+de-duplication so a 5th copy can't drift. `lib/bnr-report.ts` still
+does NOT use it (deliberate Normal-by-policy default — unchanged).
+`tsc --noEmit` clean. Applied to the working tree 2026-09-02; commit
+separately.
+
+## Weekly Deep Check 2026-09-02 — two more real findings, not yet actioned
+
+**1. Three duplicate `bank_charges` expense pairs — awaiting Devotha.**
+`iacm_expenses` has three pairs of rows with identical category +
+amount + date, each pair also posting its own separate balanced
+journal entry (Dr 6280 / Cr 3020):
+- 2,520 on 2026-07-08 ("Cheque payment charges" / "cheque payment charges") — entries `56e687ff…` & `0d5dec5b…`
+- 14,000 on 2026-07-08 ("bk cheque charges" ×2) — entries `4922db4b…` & `de1eb05b…`
+- 1,000 on 2026-07-10 ("cheque payment charges" ×2) — entries `a1343357…` & `5935c295…`
+
+All six entered by "KUBWIMANA Devotha" during the 2026-08-19/20 manual
+backfill session, each pair 3–33 minutes apart with a lowercase/
+abbreviation narration variant — the profile of an accidental
+re-submission, not two genuinely distinct same-day identical charges.
+**If they are duplicates:** account 6280 is overstated by 17,520 and,
+since all three dates are after the 2026-06-30 Net Profit cutoff and
+`bank_charges` is not a liability category, **Net Profit is understated
+by 17,520** (would move 7,744,399.4 → 7,761,919.4). Not reversed — the
+app's own duplicate-warning was overridden or bypassed during bulk
+entry, and confirming real-vs-mistake needs Devotha. Reverse the
+3 extra rows via the Reverse Transaction feature if she confirms.
+
+**2. CRB "Sector of Activity" blank for 15 of 22 outstanding loans.**
+`iacm_loans.economic_sector` is null on 15 of the 22 currently-
+outstanding loans, so a CRB filing generated today has 15 blank
+Sector-of-Activity cells. The generator is behaving correctly (blank,
+not a guess); this is the upstream data-capture gap already noted in
+the 2026-08-17 CRB audit entry, now quantified against the live active
+book. Nature and Category are fully populated (0 blank — the "39"
+catch-all works). Fix is upstream: loan officers set `economic_sector`
+per loan (same shape as the marital_status/DOB backfill that was
+closed by direct client contact). The 7 loans that do have it produce
+correct 4-digit codes (`0001`/`6000`/`9200`/`9300`).

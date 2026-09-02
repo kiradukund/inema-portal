@@ -169,6 +169,50 @@ export function getDaysOverdue(maturityDate: string, balance: number, today: Dat
   return Math.floor((today.getTime() - maturity.getTime()) / 86400000)
 }
 
+// ─── BNR / CRB LOAN CLASSIFICATION BY DAYS IN ARREARS ────────────────────────
+// SINGLE SOURCE OF TRUTH for the day-boundary rule. This exact rule was
+// independently (and, on 2026-08-23, inconsistently) reimplemented in four
+// separate places — lib/crb-report.ts, app/admin/page.tsx's portfolio chart,
+// app/admin/iacm/reports/bnr/page.tsx's descriptive copy, and
+// app/admin/iacm/loans/page.tsx's getBNRClass(). All four now call this.
+// Boundaries per the real BNR "CLASSIFICATION" sheet, cross-checked against
+// the TransUnion Rwanda Data Specification v1.9 — see
+// docs/bnr-codification-reference.json ("classification").
+//
+// NOTE: lib/bnr-report.ts deliberately does NOT use this to assign buckets —
+// it defaults every loan to Normal by real filed-practice policy (see that
+// file and docs/known-gaps.md "Loan classification"). This helper is for the
+// CRB generator (which classifies for real) and every day-bucket the admin
+// UI DISPLAYS.
+export type BnrClass = 1 | 2 | 3 | 4 | 5
+
+export function classifyByDays(days: number): BnrClass {
+  if (days <= 29) return 1   // Normal — real 0–29 day grace window
+  if (days <= 89) return 2   // Watch
+  if (days <= 179) return 3  // Substandard
+  if (days <= 359) return 4  // Doubtful
+  return 5                   // Loss
+}
+
+export const BNR_CLASS_LABEL: Record<BnrClass, string> = {
+  1: 'Normal', 2: 'Watch', 3: 'Substandard', 4: 'Doubtful', 5: 'Loss',
+}
+
+// Day-range strings, kept next to the boundaries above so descriptive UI copy
+// can't drift from the real thresholds.
+export const BNR_CLASS_DAY_RANGE: Record<BnrClass, string> = {
+  1: '0-29', 2: '30-89', 3: '90-179', 4: '180-359', 5: '360+',
+}
+
+// "Normal (0-29d)" style labels for chart legends.
+export const BNR_CLASS_RANGE_LABEL: Record<BnrClass, string> = {
+  1: `Normal (${BNR_CLASS_DAY_RANGE[1]}d)`,
+  2: `Watch (${BNR_CLASS_DAY_RANGE[2]}d)`,
+  3: `Substandard (${BNR_CLASS_DAY_RANGE[3]}d)`,
+  4: `Doubtful (${BNR_CLASS_DAY_RANGE[4]}d)`,
+  5: `Loss (${BNR_CLASS_DAY_RANGE[5]}d)`,
+}
+
 // ─── FORMAT HELPERS ──────────────────────────────────────────────────────────
 export function formatRWF(amount: number): string {
   return `RWF ${amount.toLocaleString('en-RW')}`

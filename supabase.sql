@@ -699,3 +699,31 @@ alter table iacm_reversals enable row level security;
 create policy "admin_only_iacm_reversals" on iacm_reversals
   for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
 create index if not exists idx_iacm_reversals_original_journal_entry_id on iacm_reversals(original_journal_entry_id);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Audit trail for the admin "Recalculate from payments" safety-net action
+-- (lib/ledger.ts's recomputeLoanFromPayments(),
+--  app/api/admin/iacm/loans/recalculate). Non-destructive: it re-derives a
+-- loan's balance_outstanding / principal_repaid / status / installment
+-- counters / last_payment_date from the loan's own disbursed_amount and its
+-- real iacm_payments rows. This table records every use — who, when, why,
+-- and the before/after derived fields — so a manual recalculation is never
+-- an unexplained silent change. `reason` is optional (the action is safe),
+-- but who/when/before/after are always captured. Admin-only RLS, same as
+-- every other iacm_* table.
+create table if not exists iacm_loan_recalculations (
+  id                    uuid primary key default uuid_generate_v4(),
+  loan_id               uuid not null,
+  loan_number           text,
+  reason                text,
+  before_state          jsonb not null,
+  after_state           jsonb not null,
+  changed               boolean not null default false,
+  triggered_by_user_id  uuid references profiles(id),
+  triggered_by_name     text not null,
+  created_at            timestamptz not null default now()
+);
+alter table iacm_loan_recalculations enable row level security;
+create policy "admin_only_iacm_loan_recalculations" on iacm_loan_recalculations
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create index if not exists idx_iacm_loan_recalculations_loan_id on iacm_loan_recalculations(loan_id);

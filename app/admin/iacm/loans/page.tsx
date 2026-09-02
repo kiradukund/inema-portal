@@ -1,6 +1,7 @@
 import { requireAdmin, formatRWF } from '@/lib/admin'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { getDaysOverdue, classifyByDays, BNR_CLASS_LABEL, type BnrClass } from '@/lib/calculator'
+import RecalcButton from './RecalcButton'
 import Link from 'next/link'
 
 export const dynamic = 'force-dynamic'
@@ -87,6 +88,7 @@ export default async function LoanPortfolio() {
                           className="text-xs bg-slate-50 text-slate-600 border border-slate-200 px-2 py-1 rounded-lg hover:bg-slate-100">
                           WhatsApp
                         </a>
+                        <RecalcButton loanId={l.id} loanNumber={l.loan_number} />
                       </div>
                     </td>
                   </tr>

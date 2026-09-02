@@ -234,6 +234,77 @@ export interface ReverseTransactionResult {
   reversal_id?: string
 }
 
+// ── Recompute a loan's derived fields from GROUND TRUTH ──────────────────
+// Rebuilds balance_outstanding / principal_repaid / last_payment_date /
+// status / installment counters from the loan's own disbursed_amount and the
+// iacm_payments rows that ACTUALLY EXIST for it right now — never by nudging
+// whatever value is currently stored. Called at the end of every
+// loan-affecting reversal branch so the outcome is:
+//   • order-independent — reversing {payment, payment, restructuring} in any
+//     order lands on the same correct balance
+//   • self-correcting   — if the stored balance was already wrong (a
+//     restructuring zeroed it, or an earlier reversal left it off), this
+//     still produces the real answer
+// Real incident it fixes: INEMA-2026-0008 (NIYITEGEKA Francine), 2026-09-02,
+// where reversing two payments then the restructuring left balance_outstanding
+// at the restructured loan's disbursed_amount (1,999,800) instead of the true
+// 2,174,800 — see docs/known-gaps.md. Pure function of (loan row, its payment
+// rows, its restructuring child if any); safe to run any time.
+export async function recomputeLoanFromPayments(
+  supabase: ReturnType<typeof createAdminClient>,
+  loanId: string,
+): Promise<{ error: string | null }> {
+  const { data: loan, error: loanErr } = await supabase
+    .from('iacm_loans').select('*').eq('id', loanId).single()
+  if (loanErr || !loan) return { error: `recomputeLoanFromPayments: loan ${loanId} not found` }
+
+  const { data: pays, error: payErr } = await supabase
+    .from('iacm_payments').select('payment_date, principal_portion')
+    .eq('loan_id', loanId)
+    .order('payment_date', { ascending: false })
+  if (payErr) return { error: `recomputeLoanFromPayments: payments query failed: ${payErr.message}` }
+  const rows = pays ?? []
+
+  const principalRepaid = rows.reduce((s, p) => s + Number(p.principal_portion ?? 0), 0)
+  const lastPaymentDate = rows.length > 0 ? rows[0].payment_date : null
+
+  // A loan that has been restructured INTO another, still-live loan had its
+  // principal transferred out: its own balance is 0 by definition and its
+  // status must stay 'restructured'. Anything else is a normal live loan.
+  const { data: children, error: childErr } = await supabase
+    .from('iacm_loans').select('id').eq('restructured_from_loan_id', loanId).limit(1)
+  if (childErr) return { error: `recomputeLoanFromPayments: restructure-child query failed: ${childErr.message}` }
+  const restructuredAway = (children ?? []).length > 0
+
+  const balanceOutstanding = restructuredAway
+    ? 0
+    : Math.max(0, Number(loan.disbursed_amount ?? 0) - principalRepaid)
+
+  // Own only the three statuses this function is responsible for; preserve
+  // any deliberate terminal status set elsewhere (e.g. a future 'written_off').
+  let status = loan.status
+  if (restructuredAway) status = 'restructured'
+  else if (['active', 'completed', 'restructured'].includes(loan.status)) {
+    status = balanceOutstanding <= 0 ? 'completed' : 'active'
+  }
+
+  const totalInstallments = Number(loan.total_installments ?? 1)
+  const installmentsPaid = rows.length
+  const installmentsOutstanding = Math.max(0, totalInstallments - installmentsPaid)
+
+  const { error: updErr } = await supabase.from('iacm_loans').update({
+    balance_outstanding: balanceOutstanding,
+    principal_repaid: principalRepaid,
+    last_payment_date: lastPaymentDate,
+    status,
+    installments_paid: installmentsPaid,
+    installments_outstanding: installmentsOutstanding,
+    updated_at: new Date().toISOString(),
+  }).eq('id', loanId)
+  if (updErr) return { error: `recomputeLoanFromPayments: loan update failed: ${updErr.message}` }
+  return { error: null }
+}
+
 // Writes the iacm_reversals audit row BEFORE touching any domain/journal
 // data, not after. This is a deliberate departure from the strict
 // "commit only when fully done" ideal (which would need a real Postgres
@@ -347,41 +418,25 @@ export async function reverseTransaction(
   // Domain mutation, per type. Errors from here on leave the audit row
   // in place (see function comment) rather than rolling it back.
   if (entry.entry_type === 'payment') {
-    const principalPortion = Number(domainRow.principal_portion ?? 0)
-    const newBalance = Number(loanBefore.balance_outstanding) + principalPortion
-    const newPrincipalRepaid = Math.max(0, Number(loanBefore.principal_repaid ?? 0) - principalPortion)
-    const newInstallmentsPaid = Math.max(0, Number(loanBefore.installments_paid ?? 0) - 1)
-    const newInstallmentsOutstanding = Number(loanBefore.installments_outstanding ?? 0) + 1
-    const newStatus = newBalance <= 0 ? 'completed' : 'active'
-
     const { error: delPayErr } = await supabase.from('iacm_payments').delete().eq('id', domainRowId)
     if (delPayErr) return { error: `Failed to delete the payment: ${delPayErr.message}` }
 
-    const { data: remaining } = await supabase
-      .from('iacm_payments').select('payment_date').eq('loan_id', domainRow.loan_id)
-      .order('payment_date', { ascending: false }).limit(1)
-    const newLastPaymentDate = remaining && remaining.length > 0 ? remaining[0].payment_date : null
-
-    const { error: loanUpdErr } = await supabase.from('iacm_loans').update({
-      balance_outstanding: newBalance,
-      principal_repaid: newPrincipalRepaid,
-      installments_paid: newInstallmentsPaid,
-      installments_outstanding: newInstallmentsOutstanding,
-      status: newStatus,
-      last_payment_date: newLastPaymentDate,
-      updated_at: new Date().toISOString(),
-    }).eq('id', domainRow.loan_id)
-    if (loanUpdErr) return { error: `Payment deleted, but failed to update the loan: ${loanUpdErr.message}` }
+    // Rebuild the loan from ground truth rather than incrementally undoing
+    // this one payment's principal — the stored balance may already be wrong
+    // (e.g. a prior restructuring zeroed it). See recomputeLoanFromPayments().
+    const rec = await recomputeLoanFromPayments(supabase, domainRow.loan_id)
+    if (rec.error) return { error: `Payment deleted, but failed to recompute the loan: ${rec.error}` }
   } else if (entry.entry_type === 'loan_restructuring') {
-    const { error: restoreErr } = await supabase.from('iacm_loans').update({
-      balance_outstanding: domainRow.disbursed_amount,
-      status: 'active',
-      updated_at: new Date().toISOString(),
-    }).eq('id', domainRow.restructured_from_loan_id)
-    if (restoreErr) return { error: `Failed to restore the original loan: ${restoreErr.message}` }
-
+    // Delete the restructured (new) loan FIRST so the recompute of the
+    // original loan below sees no live restructuring child and rebuilds its
+    // real balance from its OWN disbursed_amount and payments — not from the
+    // new loan's disbursed_amount, which is what left INEMA-2026-0008 wrong
+    // (see recomputeLoanFromPayments() and docs/known-gaps.md).
     const { error: delErr } = await supabase.from('iacm_loans').delete().eq('id', domainRowId)
-    if (delErr) return { error: `Original loan restored, but failed to delete the new loan: ${delErr.message}` }
+    if (delErr) return { error: `Failed to delete the restructured loan: ${delErr.message}` }
+
+    const rec = await recomputeLoanFromPayments(supabase, domainRow.restructured_from_loan_id)
+    if (rec.error) return { error: `Restructured loan deleted, but failed to restore the original loan: ${rec.error}` }
   } else if (entry.entry_type === 'disbursement' || entry.entry_type === 'expense') {
     const { error: delErr } = await supabase.from(handler.domainTable as string).delete().eq('id', domainRowId)
     if (delErr) return { error: `Failed to delete the record: ${delErr.message}` }

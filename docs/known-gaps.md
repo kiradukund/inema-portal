@@ -2512,3 +2512,90 @@ catch-all works). Fix is upstream: loan officers set `economic_sector`
 per loan (same shape as the marital_status/DOB backfill that was
 closed by direct client contact). The 7 loans that do have it produce
 correct 4-digit codes (`0001`/`6000`/`9200`/`9300`).
+
+## Real incident: reversing a payment + a restructuring left a loan's balance wrong — INEMA-2026-0008 (NIYITEGEKA Francine), 2026-09-02
+
+**Found:** 2026-09-02. Kevin reversed three real entries on
+INEMA-2026-0008 in this order: a payment (2026-08-04, principal
+100,000), a payment (2026-08-03, principal 75,000), then the loan's
+2026-08-01 restructuring (new loan INEMA-2026-0029, disbursed
+1,999,800). Afterward the Loan Portfolio still showed a wrong balance.
+
+**Confirmed a real DATA bug, not display.** Queried `iacm_loans`
+directly: `balance_outstanding` was **1,999,800**, `updated_at` matched
+the reversal timestamp (the row *was* written), and the correct figure
+from first principles is `disbursed_amount 3,500,000 − Σ
+principal_portion 1,325,200 = 2,174,800` — understated by exactly
+175,000 (one month's interest). Every other active loan reconciled
+exactly; journal balanced; blast radius was this one loan only.
+
+**Root cause — two compounding gaps in `reverseTransaction()`
+(`lib/ledger.ts`):**
+- The `payment` branch did `newBalance = loanBefore.balance_outstanding
+  + principal_portion`. When the loan had been restructured (balance
+  set to 0), it added principal back onto that zero instead of
+  rebuilding the real balance, and silently flipped `status`
+  restructured → active.
+- The `loan_restructuring` branch restored the original loan with
+  `balance_outstanding = new_loan.disbursed_amount` — a blind copy
+  assuming the new loan's disbursed amount equals the old loan's true
+  balance and that nothing touched the old loan since. Both false here.
+- The restructuring reversal ran last and blind-overwrote, discarding
+  what the two payment reversals had done — so the outcome was
+  order-dependent.
+
+**Fix (2026-09-02):** new `recomputeLoanFromPayments(supabase, loanId)`
+in `lib/ledger.ts`. Rebuilds `balance_outstanding` / `principal_repaid`
+/ `last_payment_date` / `status` / installment counters purely from the
+loan's own `disbursed_amount`, its real remaining `iacm_payments` rows,
+and whether it currently has a live restructuring child (→ balance 0,
+status stays `restructured`). Never reads the stored balance.
+`reverseTransaction()`'s `payment` and `loan_restructuring` branches
+both now end by calling it (the restructuring branch deletes the new
+loan first, so the recompute sees no child). One helper closes all
+three gaps and makes the result order-independent. `lib/bnr-report.ts`
+and the normal payment-recording route are unaffected.
+
+**Manual correction:** INEMA-2026-0008 `balance_outstanding` corrected
+1,999,800 → 2,174,800 via one guarded UPDATE, verified before/after
+(reconciliation exact, all other columns unchanged, journal balanced,
+every other active loan still reconciles). `principal_repaid` /
+`status` / `last_payment_date` were already correct.
+
+**Separate, still open:** the original 2026-08-01 restructuring created
+INEMA-2026-0029 for 1,999,800 when the true outstanding was 2,174,800 —
+a 175,000 shortfall. That restructuring is now fully reversed; if
+re-done, the figure should be 2,174,800. Needs Devotha.
+
+**Safety net added:** an admin-only "Recalculate from payments" action
+on the Loan Portfolio page (`app/admin/iacm/loans/RecalcButton.tsx` →
+`app/api/admin/iacm/loans/recalculate/route.ts`) runs
+`recomputeLoanFromPayments()` on a single loan and records every use in
+a new `iacm_loan_recalculations` audit table (who / when / optional
+reason / before & after). Any future drift becomes a one-click, audited
+repair. **Its DDL must be run in the Supabase dashboard** — PostgREST
+can't execute DDL, same constraint as every other IACM table. The
+`recomputeLoanFromPayments()` function itself needs no new table.
+
+**Two real test-script bugs found while proving the fix** (disposable-
+data regression test, now `scripts/test-reversal-recompute.ts`):
+- It reused one `national_id` for all 7 disposable clients per run —
+  `national_id` is `UNIQUE NOT NULL`, so it collided at Phase 2. Fixed:
+  unique per client.
+- Its cleanup deleted loans before their payments and swallowed every
+  delete error. This surfaced that the **live schema's
+  `iacm_payments.loan_id` and `iacm_loans.client_id` FKs are
+  `RESTRICT`, not `CASCADE`** (the tracked `supabase.sql` is stale on
+  this). 4 disposable loans + 6 clients + 19 payments were left in the
+  live DB after a run; cleaned up manually (every row confirmed
+  `ZZ_TEST_RECOMPUTE_`-tagged first, verified back to 31 loans /
+  balanced journal / Francine untouched at 2,174,800). Fixed: cleanup
+  now deletes bottom-up (payments → loans → clients), error-checks
+  every call, and throws if any tagged row survives.
+
+**Verified:** 29/29 logic checks green — the fix produces 2,174,800 in
+Francine's exact scenario and order-independently (restructuring-first
+gives the same result), plus regressions: plain-loan payment reverse
+returns balance to `disbursed_amount`; reversing a payoff's final
+payment flips `completed` → `active`; a loan still restructured into a
+live child stays `restructured` / balance 0.

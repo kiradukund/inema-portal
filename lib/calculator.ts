@@ -156,6 +156,84 @@ export function calculateLateFee(overdueAmount: number, monthsOverdue: number): 
   return Math.round(overdueAmount * LATE_PAYMENT_RATE * monthsOverdue)
 }
 
+// ─── RESTRUCTURING BREAKDOWN ─────────────────────────────────────────────────
+// Whole calendar months between two YYYY-MM-DD strings, floored at 1.
+// String-parsed (not `new Date(str)`) to stay immune to the UTC/local
+// day-shift bug class documented in lib/ledger.ts and elsewhere.
+export function wholeMonthsBetween(fromStr: string, toStr: string): number {
+  const [fy, fm, fd] = fromStr.split('-').map(Number)
+  const [ty, tm, td] = toStr.split('-').map(Number)
+  let months = (ty - fy) * 12 + (tm - fm)
+  if (td < fd) months -= 1
+  return Math.max(1, months)
+}
+
+export interface RestructureScheduleRow {
+  month: number
+  interest: number
+  fee: number
+  vat: number
+  principal: number
+  total: number
+}
+export interface RestructureBreakdown {
+  amount: number
+  months: number
+  fee: number
+  vat: number
+  monthlyInterest: number
+  month1Total: number
+  finalTotal: number
+  totalRepayment: number
+  schedule: RestructureScheduleRow[]
+}
+
+// The fee / VAT / interest composition for a restructured contract, built
+// the SAME way calculateLoan() builds a normal new loan of that amount:
+// fee = 4% of the (agreed) principal, VAT = 18% of that fee, monthly
+// interest = 5% of principal. Month 1 carries fee + VAT + interest;
+// interior months carry interest only; the final month adds the whole
+// principal balloon (INEMA's real interest-only-then-lump-sum model).
+//
+// Deliberately NOT rounded here — it mirrors the restructuring route's
+// existing `amount * UPFRONT_FEE_RATE` / `fee * VAT_RATE` math exactly, so
+// the form's "review before you confirm" schedule preview and the journal
+// the route actually posts can never drift. Used by BOTH
+// app/api/admin/iacm/loans/restructure/route.ts and its form.
+// (calculateLoan() is left untouched — it has a different schedule
+// contract, rounds, and is consumed by the public loan calculator.)
+export function buildRestructureBreakdown(amount: number, months: number): RestructureBreakdown {
+  const n = Math.max(1, Math.floor(months || 0))
+  const fee = amount * UPFRONT_FEE_RATE
+  const vat = fee * VAT_RATE
+  const monthlyInterest = amount * MONTHLY_INTEREST_RATE
+  const schedule: RestructureScheduleRow[] = []
+  for (let m = 1; m <= n; m++) {
+    const feeAmt = m === 1 ? fee : 0
+    const vatAmt = m === 1 ? vat : 0
+    const principalAmt = m === n ? amount : 0
+    schedule.push({
+      month: m,
+      interest: monthlyInterest,
+      fee: feeAmt,
+      vat: vatAmt,
+      principal: principalAmt,
+      total: monthlyInterest + feeAmt + vatAmt + principalAmt,
+    })
+  }
+  return {
+    amount,
+    months: n,
+    fee,
+    vat,
+    monthlyInterest,
+    month1Total: monthlyInterest + fee + vat,
+    finalTotal: schedule[n - 1].total,
+    totalRepayment: schedule.reduce((s, r) => s + r.total, 0),
+    schedule,
+  }
+}
+
 // ─── DAYS OVERDUE ────────────────────────────────────────────────────────────
 // Shared by both regulatory report generators (BNR quarterly, CRB monthly).
 // Originally lived only in lib/bnr-report.ts, where it was built but never

@@ -1,4 +1,5 @@
 import { createAdminClient } from './supabase'
+import { buildRestructureBreakdown, wholeMonthsBetween } from './calculator'
 
 // Formats a Date as YYYY-MM-DD using its LOCAL calendar fields, not
 // toISOString() (which is UTC-based). Confirmed real bug: constructing a
@@ -114,6 +115,151 @@ export async function postJournalEntry(
   }))
   const { error: linesError } = await supabase.from('iacm_journal_lines').insert(lineRows)
   return { error: linesError }
+}
+
+// ── Loan Restructuring / Rollover ───────────────────────────────────────────
+// Converts a defaulted loan's remaining debt into a fresh contract with NO
+// cash movement. Extracted here (from the route) so it runs through one
+// tested code path, alongside reverseTransaction()/recomputeLoanFromPayments().
+//
+// `restructured_amount` is OPTIONAL: omit it (or pass a value equal to the
+// old loan's balance) and the behaviour is exactly the pre-2026-09-03
+// route — the new loan carries the old loan's exact outstanding balance and
+// the two 3110 transfer lines net to zero on that shared GL account.
+//
+// When staff DO enter a different agreed figure (Option A, confirmed with
+// Kevin 2026-09-03): that figure becomes the new loan's real
+// disbursed_amount / balance_outstanding, BOTH 3110 lines are posted at it
+// (so the journal still balances), and the difference vs the old balance is
+// a deliberate principal write-down (amount < old) or capitalisation
+// (amount > old) agreed as part of the restructuring — the loan-portfolio
+// total legitimately moves by that delta. The caller (form) warns on the
+// delta; this function does not block it. Fee (4%) + VAT (18% of fee) are
+// computed from the agreed amount, same as any normal disbursement.
+//
+// Reversing this (entry_type 'loan_restructuring') deletes the new loan and
+// recomputes the old one from its own payments — which also unwinds any
+// write-down, restoring the true pre-restructuring balance. See
+// reverseTransaction()'s loan_restructuring branch.
+export interface RestructureLoanParams {
+  old_loan_id: string
+  restructure_date: string
+  maturity_date: string
+  restructured_amount?: number | string | null
+  loan_type?: string
+  purpose?: string
+  economic_sector?: string
+  loan_officer?: string
+  collateral_type?: string
+  collateral_amount?: number | string
+  created_by: string
+}
+export interface RestructureLoanResult {
+  error: string | null
+  new_loan_id?: string
+  new_loan_number?: string
+  restructured_amount?: number
+  old_balance?: number
+  delta?: number
+  fee?: number
+  vat?: number
+}
+
+export async function restructureLoan(
+  supabase: ReturnType<typeof createAdminClient>,
+  params: RestructureLoanParams,
+): Promise<RestructureLoanResult> {
+  const { old_loan_id, restructure_date, maturity_date, restructured_amount, created_by } = params
+  if (!old_loan_id || !restructure_date || !maturity_date) return { error: 'Missing required fields' }
+  if (!(maturity_date > restructure_date)) return { error: 'Maturity date must be after the restructuring date' }
+
+  const { data: oldLoan, error: oldLoanErr } = await supabase
+    .from('iacm_loans').select('*, iacm_clients(full_name)').eq('id', old_loan_id).single()
+  if (oldLoanErr || !oldLoan) return { error: 'Original loan not found' }
+  if (oldLoan.status !== 'active') {
+    return { error: `This loan is "${oldLoan.status}", not active — only an active loan with a real remaining balance can be restructured` }
+  }
+  const oldBalance = Number(oldLoan.balance_outstanding)
+  if (!(oldBalance > 0)) return { error: 'This loan has no remaining balance to restructure' }
+
+  // Optional manual amount; defaults to the old loan's exact balance.
+  const provided = restructured_amount !== undefined && restructured_amount !== null && restructured_amount !== ''
+  const amount = provided ? Number(restructured_amount) : oldBalance
+  if (!Number.isFinite(amount) || amount <= 0) return { error: 'Restructured amount must be a positive number' }
+
+  // Fee/VAT from the agreed amount — same formula as the normal disbursement
+  // route, now sourced from the shared calculator helper so the form preview
+  // and this cannot diverge.
+  const { fee, vat } = buildRestructureBreakdown(amount, wholeMonthsBetween(restructure_date, maturity_date))
+
+  const { count } = await supabase.from('iacm_loans').select('*', { count: 'exact', head: true })
+  const loanNumber = `INEMA-${new Date().getFullYear()}-${String((count ?? 0) + 1).padStart(4, '0')}`
+
+  const { data: newLoan, error: newLoanErr } = await supabase.from('iacm_loans').insert({
+    client_id: oldLoan.client_id,
+    loan_number: loanNumber,
+    loan_type: params.loan_type || oldLoan.loan_type,
+    disbursed_amount: amount,
+    disbursement_date: restructure_date,
+    maturity_date,
+    interest_rate: 0.05,
+    interest_method: oldLoan.interest_method ?? 'flat',
+    repayment_frequency_days: oldLoan.repayment_frequency_days ?? 30,
+    grace_period_days: 0,
+    collateral_type: params.collateral_type || oldLoan.collateral_type,
+    collateral_amount: Number(params.collateral_amount) || Number(oldLoan.collateral_amount) || 0,
+    purpose: params.purpose || `Restructured from ${oldLoan.loan_number}`,
+    economic_sector: params.economic_sector || oldLoan.economic_sector,
+    loan_officer: params.loan_officer || oldLoan.loan_officer,
+    balance_outstanding: amount,
+    principal_repaid: 0,
+    status: 'active',
+    restructured_from_loan_id: oldLoan.id,
+  }).select().single()
+  if (newLoanErr) return { error: newLoanErr.message }
+
+  const { error: oldLoanUpdErr } = await supabase.from('iacm_loans').update({
+    balance_outstanding: 0,
+    status: 'restructured',
+    updated_at: new Date().toISOString(),
+  }).eq('id', oldLoan.id)
+  if (oldLoanUpdErr) return { error: `New loan ${loanNumber} created, but failed to close the old loan: ${oldLoanUpdErr.message}` }
+
+  // Journal: both 3110 transfer lines at the agreed amount (nets to zero on
+  // that shared GL account); the fee/VAT lines are the only real effect on
+  // any balance — exactly mirroring a normal disbursement's fee treatment.
+  try {
+    const clientName = (oldLoan as any).iacm_clients?.full_name ?? oldLoan.loan_number
+    const narration = `Loan restructuring — ${clientName} (${oldLoan.loan_number} → ${loanNumber})`
+    const { error: journalErr } = await postJournalEntry(supabase, {
+      entry_date: restructure_date,
+      narration,
+      reference: `loan-${newLoan.id}`,
+      entry_type: 'loan_restructuring',
+      created_by,
+      lines: [
+        { account_code: '3110', account_name: `Loan Issued — transferred out (${oldLoan.loan_number})`, credit: amount },
+        { account_code: '3110', account_name: `Loan Issued — transferred in (${loanNumber})`, debit: amount },
+        { account_code: '3030', account_name: 'Accounts Receivable — Interest and Fees', debit: fee + vat },
+        { account_code: '7020', account_name: 'Fees & Commission Income', credit: fee },
+        { account_code: '2530', account_name: 'VAT Control Account', credit: vat },
+      ],
+    })
+    if (journalErr) console.error('Journal auto-entry failed (non-fatal):', journalErr)
+  } catch (journalErr) {
+    console.error('Journal auto-entry failed (non-fatal):', journalErr)
+  }
+
+  return {
+    error: null,
+    new_loan_id: newLoan.id,
+    new_loan_number: loanNumber,
+    restructured_amount: amount,
+    old_balance: oldBalance,
+    delta: amount - oldBalance,
+    fee,
+    vat,
+  }
 }
 
 // iacm_opening_balances is the reconciled, permanent snapshot of the

@@ -96,11 +96,26 @@ export async function GET() {
     rows.forEach((r, i) => {
       const rowNum = DATA_START_ROW + i
       const row = ws.getRow(rowNum)
-      const values = [monthLabel(r.date), dayLabel(r.date), r.narration, r.accountCode, r.accountName, r.debit || null, r.credit || null]
+      // Column 4 (Account code) is written as a real VLOOKUP formula against
+      // the Accounts sheet, deriving the code from column 5's account name —
+      // matching exactly what the template's own original rows did before
+      // this export route existed. Writing the code as a literal (the old
+      // behavior) silently destroyed that link on every export: the Accounts
+      // sheet and the Journal sheet could drift apart with nothing to catch
+      // it. See docs/accounting-reference.md, Addendum item 2.
+      const values: Array<string | number | { formula: string; result: any } | null> = [
+        monthLabel(r.date),
+        dayLabel(r.date),
+        r.narration,
+        { formula: `IFERROR(VLOOKUP(E${rowNum},Accounts!$B$2:$C$66,2,FALSE),0)`, result: Number(r.accountCode) || r.accountCode },
+        r.accountName,
+        r.debit || null,
+        r.credit || null,
+      ]
       values.forEach((v, idx) => {
         const c = idx + 1
         const cell = row.getCell(c)
-        cell.value = v
+        cell.value = v as any
         cell.style = styleByCol[c]
         if (numFmtByCol[c]) cell.numFmt = numFmtByCol[c]
       })

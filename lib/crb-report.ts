@@ -69,6 +69,13 @@ const HEADERS_OF_INTEREST = [
   'Scheduled Monthly Payment Amount', 'Actual Payment Amount', 'Amount Past Due',
   'Installments in Arrears', 'Days in Arrears', 'Last Payment Date', 'Interest Rate',
   'First Payment Date', 'Nature', 'Category', 'Sector of Activity', 'Final Payment Date',
+  // Added 2026-09-07 (Item 1 of the real CRB field-correction plan,
+  // grounded in TransUnion's real Data Specification Document v1.9):
+  // "Date Closed" -- the date the loan account was closed, mandatory
+  // only when Account Status reflects an actually-closed account.
+  // Previously entirely absent from this list, meaning this generator
+  // never touched or cleared this cell for any loan.
+  'Date Closed',
 ]
 
 // Real Rwandan-convention full_name is "SURNAME Forename [Forename2]
@@ -230,20 +237,115 @@ async function archiveGeneratedReport(supabase: any, buffer: Buffer, filename: s
   if (insertErr) throw new Error(`Failed to record archived CRB report: ${insertErr.message}`)
 }
 
-async function fetchOutstandingLoans(supabase: any) {
+// Item 2 of the real CRB field-correction plan (2026-09-07), grounded
+// in TransUnion's real Data Specification Document v1.9 -- replaced
+// fetchOutstandingLoans() (which only ever selected balance_outstanding
+// > 0, removed entirely once this and Item 6's wiring landed — no
+// longer has any real caller) as the real source feeding
+// generateCrbReport(). Fetches EVERY real loan regardless of balance,
+// since a fully-repaid
+// loan must still be reported (with an updated Account Status and Date
+// Closed, Items 2/5), never silently dropped from the file the way
+// fetchOutstandingLoans()'s balance filter caused.
+export async function fetchAllLoans(supabase: any) {
   const { data, error } = await supabase
     .from('iacm_loans')
     .select('*, iacm_clients(*)')
-    .gt('balance_outstanding', 0)
   if (error) throw new Error(error.message)
   return data ?? []
+}
+
+// The Consumer sheet is keyed one row per national_id (readConsumerRoster/
+// targetByNationalId), but a real client can have more than one real
+// loan over time -- a pre-existing constraint of this generator, not
+// something introduced here. This picks which single loan represents
+// that client's row:
+// - Any currently-active (balance > 0) loan wins, since that's the real,
+//   current state to report. If a client somehow has more than one
+//   active loan simultaneously (a real, pre-existing ambiguity, not
+//   solved here), the most recently disbursed one wins, deterministically.
+// - Otherwise every one of the client's loans is fully repaid -- the
+//   most recently closed one (by last_payment_date, falling back to
+//   disbursement_date if that's ever missing) represents the client,
+//   since that's the real, most current closure event.
+export function pickRepresentativeLoan(loans: any[]): any {
+  const active = loans.filter(l => Number(l.balance_outstanding ?? 0) > 0)
+  if (active.length > 0) {
+    return active.sort((a, b) => new Date(b.disbursement_date).getTime() - new Date(a.disbursement_date).getTime())[0]
+  }
+  return loans.sort((a, b) => {
+    const aDate = a.last_payment_date ?? a.disbursement_date
+    const bDate = b.last_payment_date ?? b.disbursement_date
+    return new Date(bDate).getTime() - new Date(aDate).getTime()
+  })[0]
+}
+
+// Groups fetchAllLoans()'s flat list by client national_id and reduces
+// each group to its one representative loan via pickRepresentativeLoan()
+// -- the real shape generateCrbReport()'s per-client target computation
+// needs (Step 6).
+export function groupLoansByRepresentative(loans: any[]): Map<string, any> {
+  const byNationalId = new Map<string, any[]>()
+  for (const loan of loans) {
+    const nid = loan.iacm_clients?.national_id
+    if (!nid) continue
+    const list = byNationalId.get(nid) ?? []
+    list.push(loan)
+    byNationalId.set(nid, list)
+  }
+  const result = new Map<string, any>()
+  for (const nid of Array.from(byNationalId.keys())) {
+    result.set(nid, pickRepresentativeLoan(byNationalId.get(nid)!))
+  }
+  return result
+}
+
+export interface AccountStatusResult {
+  status: string       // 'A' | 'T' | 'C' — Active, Early Settlement, Account Closed
+  dateClosed?: string  // YYYYMMDD, only ever set alongside 'T'/'C'
+}
+
+// Item 3 of the real CRB field-correction plan (2026-09-07), grounded
+// in TransUnion's real Data Specification Document v1.9's real
+// Account Status code list and Date Closed's own real, conditional
+// rule ("mandatory if the credit account is closed, written off or
+// paid up") — replaces the hardcoded 'A' every row got before, and is
+// the single source both "Account Status" and "Date Closed" in
+// computeFieldValues() draw from (Item 5, wired in as its own later
+// step), so the two fields can never disagree with each other.
+//
+// Deliberately does NOT attempt 'W' (Written Off) or 'X' (Paid up
+// default) — there is no real data signal in iacm_loans distinguishing
+// a genuine bad-debt write-off from an ordinary full repayment, and
+// guessing wrong there is worse than leaving it a real, manual,
+// exceptional case. 'P' (Paid Up) is also deliberately not used here —
+// its own real spec description ("can be active e.g. Revolving
+// Credit") is specific to revolving-type facilities INEMA doesn't
+// have (every real Account Type is 'I', Instalment).
+export function determineAccountStatus(loan: any): AccountStatusResult {
+  if (Number(loan.balance_outstanding ?? 0) > 0) {
+    return { status: 'A' }
+  }
+  if (!loan.last_payment_date) {
+    // Balance is 0 with no real payment ever recorded (e.g. a waived
+    // loan) — 'C' is the safest generic default; no real event date
+    // exists to put in Date Closed.
+    return { status: 'C' }
+  }
+  const closedEarly = loan.maturity_date
+    ? new Date(loan.last_payment_date).getTime() < new Date(loan.maturity_date).getTime()
+    : false
+  return {
+    status: closedEarly ? 'T' : 'C',
+    dateClosed: toYyyymmdd(loan.last_payment_date),
+  }
 }
 
 // Most recent iacm_payments row per loan_id, used for "Actual Payment
 // Amount" — the real column reads as "the last actual payment received",
 // not a running total (the adjacent "Scheduled Monthly Payment Amount"
 // column is the recurring figure; this one tracks real activity).
-async function fetchLatestPaymentByLoan(supabase: any, loanIds: string[]): Promise<Map<string, number>> {
+export async function fetchLatestPaymentByLoan(supabase: any, loanIds: string[]): Promise<Map<string, number>> {
   const map = new Map<string, number>()
   if (loanIds.length === 0) return map
   const { data, error } = await supabase
@@ -258,6 +360,33 @@ async function fetchLatestPaymentByLoan(supabase: any, loanIds: string[]): Promi
   return map
 }
 
+// Item 4 of the real CRB field-correction plan (2026-09-07), grounded
+// in TransUnion's real Data Specification Document v1.9: "First
+// Payment Date — the date the first payment WAS MADE" — a genuine,
+// past, actual event, not a scheduled/contractual one. Mirrors
+// fetchLatestPaymentByLoan() above exactly, ordered ascending instead
+// of descending so the FIRST real payment per loan wins. Deliberately
+// independent of loan.first_payment_date (the iacm_loans column),
+// which this report no longer trusts for this field — that column may
+// serve a different, legitimate purpose elsewhere in the app (e.g. a
+// scheduled/expected date shown to a loan officer), and real data
+// showed it holding future dates for loans with zero real payments,
+// which is exactly what this field must never contain.
+export async function fetchFirstPaymentByLoan(supabase: any, loanIds: string[]): Promise<Map<string, string>> {
+  const map = new Map<string, string>()
+  if (loanIds.length === 0) return map
+  const { data, error } = await supabase
+    .from('iacm_payments')
+    .select('loan_id, payment_date')
+    .in('loan_id', loanIds)
+    .order('payment_date', { ascending: true })
+  if (error) throw new Error(error.message)
+  for (const row of data ?? []) {
+    if (!map.has(row.loan_id)) map.set(row.loan_id, row.payment_date)
+  }
+  return map
+}
+
 // Assigns a durable IFSNNNN account number the first time a client is
 // ever included in a CRB export, persisted to iacm_clients.account_number
 // so it never changes again (Kevin's explicit decision #4). Sequential
@@ -265,7 +394,7 @@ async function fetchLatestPaymentByLoan(supabase: any, loanIds: string[]): Promi
 // continues from there. This feature is low-frequency and admin-only
 // (one person triggers a monthly report), so a simple max-then-increment
 // is safe without extra locking.
-async function assignAccountNumbers(supabase: any, clients: any[]): Promise<Map<string, string>> {
+export async function assignAccountNumbers(supabase: any, clients: any[]): Promise<Map<string, string>> {
   const map = new Map<string, string>()
   const byId = new Map<string, any>()
   for (const c of clients) byId.set(c.id, c)
@@ -300,17 +429,27 @@ async function assignAccountNumbers(supabase: any, clients: any[]): Promise<Map<
 // dates are stored as text, never real numbers). Undefined/blank
 // entries are omitted entirely rather than written as empty strings, so
 // a field with genuinely no value never creates a stray cell record.
-function computeFieldValues(
+export function computeFieldValues(
   loan: any,
   client: any,
   acctMap: Map<string, string>,
   paymentMap: Map<string, number>,
-  today: Date
+  today: Date,
+  // Defaults to empty for any other/future caller that doesn't have a
+  // real payment map handy -- generateCrbReport() itself now always
+  // passes a real one (Item 6), so this default is no longer load-
+  // bearing there, just a safe fallback.
+  firstPaymentMap: Map<string, string> = new Map()
 ): Record<string, string> {
   const { surname, forenames } = splitName(client.full_name ?? '')
   const days = getDaysOverdue(loan.maturity_date, Number(loan.balance_outstanding), today)
   const isOverdue = days > 0
   const scheduledPayment = Math.round(Number(loan.disbursed_amount ?? 0) * MONTHLY_INTEREST_RATE)
+  // Item 5 of the real CRB field-correction plan (2026-09-07) — computed
+  // once, reused for both Account Status and Date Closed below, so the
+  // two fields can never disagree with each other the way the real,
+  // pre-existing data does today.
+  const accountStatus = determineAccountStatus(loan)
 
   const raw: Record<string, string | number | undefined> = {
     'Salutation': salutationCode(client.gender) || undefined,
@@ -335,7 +474,9 @@ function computeFieldValues(
     'Mobile Telephone': client.phone,
     'Account Number': acctMap.get(client.id),
     'Account Type': 'I',
-    'Account Status': 'A',
+    // Item 5, real fix (2026-09-07): was hardcoded 'A' for every loan
+    // regardless of real status -- see determineAccountStatus() above.
+    'Account Status': accountStatus.status,
     'Account Owner': 'O',
     'Currency Type': 'RWF',
     'Classification': classifyByDays(days),
@@ -359,13 +500,28 @@ function computeFieldValues(
     'Current Balance': Number(loan.balance_outstanding ?? 0),
     'Current Balance Indicator': 'C',
     'Scheduled Monthly Payment Amount': scheduledPayment,
-    'Actual Payment Amount': paymentMap.get(loan.id),
+    // Item 1, real fix (2026-09-07): 0, not blank, when no real payment
+    // has occurred yet -- matches the real spec's own Mandatory flag for
+    // this field.
+    'Actual Payment Amount': paymentMap.get(loan.id) ?? 0,
     'Amount Past Due': isOverdue ? Number(loan.balance_outstanding ?? 0) : 0,
     'Installments in Arrears': isOverdue ? Math.floor(days / (loan.repayment_frequency_days || 30)) : 0,
     'Days in Arrears': isOverdue ? days : 0,
     'Last Payment Date': toYyyymmdd(loan.last_payment_date) || undefined,
     'Interest Rate': Math.round(Number(loan.interest_rate ?? 0) * 12 * 10000) / 100,
-    'First Payment Date': toYyyymmdd(loan.first_payment_date) || undefined,
+    // Item 3, real fix (2026-09-07): sourced from firstPaymentMap (the
+    // real, actual first payment date -- see fetchFirstPaymentByLoan()),
+    // not loan.first_payment_date, which real data showed holding
+    // future, scheduled values -- exactly what the real spec says this
+    // field must never contain ("the date the first payment WAS MADE").
+    // Correctly blank/omitted when no real payment has happened yet.
+    'First Payment Date': toYyyymmdd(firstPaymentMap.get(loan.id)) || undefined,
+    // Item 2, real fix (2026-09-07): only ever set alongside a genuinely
+    // closed Account Status (T/C) -- see determineAccountStatus() above.
+    // undefined (correctly omitted) for an active loan, matching the
+    // real spec's own conditional rule instead of never being written
+    // at all.
+    'Date Closed': accountStatus.dateClosed,
     // Fixed 2026-08-23 — see natureCode()/categoryCode() above. Was
     // previously excluded entirely (no confident mapping existed);
     // now every loan gets a real, defensible code via the catch-all.
@@ -409,17 +565,26 @@ export async function generateCrbReport(baseFileBufferOverride?: Buffer): Promis
   const supabase = createAdminClient()
   const baseBuffer = baseFileBufferOverride ?? (await fetchMostRecentCrbFile(supabase))
 
-  const loans = await fetchOutstandingLoans(supabase)
-  const clients = loans.map((l: any) => l.iacm_clients).filter(Boolean)
+  // Item 6, real fix (2026-09-07): fetchAllLoans() + groupLoansByRepresentative()
+  // replace fetchOutstandingLoans() -- every real loan is now considered,
+  // not just currently-outstanding ones, so a fully-repaid client is
+  // updated to a real closed status (Items 2/3/5) instead of vanishing
+  // from the report the way the old balance-filtered fetch caused.
+  const allLoans = await fetchAllLoans(supabase)
+  const representativeByNationalId = groupLoansByRepresentative(allLoans)
+  const representativeLoans = Array.from(representativeByNationalId.values())
+  const clients = representativeLoans.map((l: any) => l.iacm_clients).filter(Boolean)
   const acctMap = await assignAccountNumbers(supabase, clients)
-  const paymentMap = await fetchLatestPaymentByLoan(supabase, loans.map((l: any) => l.id))
+  const paymentMap = await fetchLatestPaymentByLoan(supabase, representativeLoans.map((l: any) => l.id))
+  const firstPaymentMap = await fetchFirstPaymentByLoan(supabase, representativeLoans.map((l: any) => l.id))
   const today = new Date()
 
   const targetByNationalId = new Map<string, Record<string, string>>()
-  for (const loan of loans) {
+  for (const nationalId of Array.from(representativeByNationalId.keys())) {
+    const loan = representativeByNationalId.get(nationalId)!
     const client = loan.iacm_clients
     if (!client?.national_id) continue
-    targetByNationalId.set(client.national_id, computeFieldValues(loan, client, acctMap, paymentMap, today))
+    targetByNationalId.set(nationalId, computeFieldValues(loan, client, acctMap, paymentMap, today, firstPaymentMap))
   }
 
   const currentRoster = readConsumerRoster(baseBuffer, HEADERS_OF_INTEREST)
@@ -479,7 +644,11 @@ export async function generateCrbReport(baseFileBufferOverride?: Buffer): Promis
 
   return {
     buffer,
-    loanCount: loans.length,
+    // representativeLoans.length, not allLoans.length -- this counts
+    // real reported rows (one per client), matching what "loanCount"
+    // has always meant here, now that a client can have more than one
+    // real loan in the underlying data (Item 2).
+    loanCount: representativeLoans.length,
     addedCount: toAdd.length,
     updatedCount,
     removedCount: toRemove.length,

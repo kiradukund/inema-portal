@@ -75,6 +75,39 @@ async function stripExcelTables(zip) {
     ct = ct.replace(/<Override PartName="\/xl\/tables\/table\d+\.xml"[^>]*\/>/g, '')
     zip.file(contentTypesPath, ct)
   }
+
+  // ─── Neutralise structured-reference formulas left dangling by the table
+  // removal above ────────────────────────────────────────────────────────
+  // Every formula that referenced a table via a structured reference
+  // (TableN[[#This Row],[Column X]], [@Column], [#This Row]) is now broken:
+  // ExcelJS rewrites it to =IF(#REF!...) on load, and a full recalc in real
+  // Excel turns the whole column to #REF! — confirmed 2026-09-10 via COM
+  // recalc against the real generated file (Eligible Collateral / Net Amount
+  // Due / Provision Required / Additional Provisions on every classification
+  // sheet, 134 error cells on the Normal Loans data region alone). The four
+  // real historical filings are unaffected because they were hand-prepared
+  // and never went through this generator/sanitizer.
+  //
+  // Every such formula carries Excel's last cached <v>, so the fix is to
+  // convert each to that static value: drop <f>...</f>, keep <v>. Same shape
+  // as resolveExternalLinks() below. Confirmed (2026-09-10, all 4 real base
+  // files) every table-referencing formula is a plain <f>...</f> with no
+  // shared-formula master/clone involvement (t="shared" formulas exist only
+  // for the plain arithmetic columns and contain no table refs), so a
+  // per-cell <f> drop is safe and complete.
+  const STRUCT_REF = /Table\d+\[|\[#This Row\]|\[@/
+  const sheetXmlFiles = Object.keys(zip.files).filter(f => /^xl\/worksheets\/sheet\d+\.xml$/.test(f))
+  for (const sheetPath of sheetXmlFiles) {
+    const file = zip.file(sheetPath)
+    if (!file) continue
+    const xml = await file.async('string')
+    if (!STRUCT_REF.test(xml)) continue
+    const fixed = xml.replace(
+      /(<c\b[^>]*>)<f\b(?![^>]*\/>)[^>]*>([^<]*)<\/f>(<v>[^<]*<\/v>)(<\/c>)/g,
+      (m, open, fBody, vTag, close) => (STRUCT_REF.test(fBody) ? `${open}${vTag}${close}` : m),
+    )
+    if (fixed !== xml) zip.file(sheetPath, fixed)
+  }
 }
 
 // Remove every formula that references another workbook (Excel's

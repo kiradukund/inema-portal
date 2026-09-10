@@ -137,10 +137,10 @@ export default async function AdminDashboard() {
 
   // ── Loan portfolio classification (BNR-style buckets), IACM loans only ──
   // Day boundaries come from the single shared classifyByDays() in
-  // lib/calculator.ts (Normal 0-29 / Watch 30-89 / Substandard 90-179 /
-  // Doubtful 180-359 / Loss 360+) — the same helper the CRB generator and
-  // the Loan Portfolio page use, so this chart can't drift from them again
-  // (it carried the identical day-boundary bug independently before 2026-08-23).
+  // lib/calculator.ts (Normal 0 / Watch 1-89 / Substandard 90-179 /
+  // Doubtful 180-359 / Loss 360+, per Regulation 65/04/2023 Art. 39 —
+  // realigned 2026-09-10, Item E1) — the same helper the CRB generator and
+  // the Loan Portfolio page use, so this chart can't drift from them.
   const iacmWithRisk = allIacmLoans.filter(l => Number(l.balance_outstanding ?? 0) > 0)
   const dayBucket = (l: any) => getDaysOverdue(l.maturity_date, Number(l.balance_outstanding), today)
   const BUCKET_COLOR: Record<BnrClass, string> = { 1: '#16a34a', 2: '#d97706', 3: '#ea580c', 4: '#dc2626', 5: '#7f1d1d' }

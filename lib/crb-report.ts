@@ -169,7 +169,8 @@ function maritalCode(m: string | null | undefined): string {
   }
 }
 
-// Loan classification by days in arrears — 1=Normal(0-29d) .. 5=Loss(360+d).
+// Loan classification by days in arrears — 1=Normal(0d) / 2=Watch(1-89d) ..
+// 5=Loss(360+d), per Regulation 65/04/2023 Art. 39 (realigned 2026-09-10, E1).
 // The day-boundary rule now lives in ONE place, lib/calculator.ts's
 // classifyByDays() (imported above), shared with the dashboard portfolio
 // chart, the Loan Portfolio page, and the BNR report page's descriptive

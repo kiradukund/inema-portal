@@ -4,6 +4,95 @@ Real, confirmed gaps found during development that are deliberately not
 fixed yet — logged here so they don't get lost, with enough context to
 pick up in a future session without re-deriving the diagnosis.
 
+## BNR report — real Regulation 65/04/2023 classification & provisioning — implemented (with one accepted caveat)
+
+**Done:** 2026-09-10. A full-workbook accuracy investigation of
+`INEMA_BNR_Report_Q3-2026_FOR_SUBMISSION.xlsx` (every sheet, logic not
+just completeness), then a fix pass against the real binding regulation —
+"Regulation No 65/04/2023 of 25/04/2023 governing non-deposit-taking
+financial service providers" (read in full; official BNR publication, not
+stored in this repo).
+
+**What was wrong and is now fixed** (all in `lib/bnr-report.ts` unless
+noted; each shipped with an isolated smoke test):
+
+- **Item A** — "Amount Repaid (Principal)" column: header was never mapped,
+  so the generator neither wrote nor cleared it; only 8/23 rows showed a
+  (stale, inherited) value. Now sourced from `iacm_loans.principal_repaid`
+  for every row.
+- **Item C1** — leftover old-format duplicate `A1.3. Normal` sheet removed.
+- **Item C2** — classification sheets' `NDFSP Name` / `Code of Institution`
+  showed `0`; now the real institution name/code.
+- **Item C3** — per-row and header cut-off date was a stale inherited date;
+  now the real quarter-end (with a UTC-midnight fix so ExcelJS doesn't
+  shift it a day back on this UTC+2 host).
+- **Item D** — `stripExcelTables` (`scripts/lib/xlsx-sanitize.js`) removed
+  Excel table parts but left dangling structured-reference formulas that a
+  real forced recalc turned into 2,626 `#REF!` errors. Now those cells are
+  converted to their cached static values, matching the existing
+  `resolveExternalLinks` pattern. Verified by real Excel COM recalc → 0
+  `#REF!`.
+- **Item F1** — FS sector split silently dumped everything into "Others"
+  because `ECONOMIC_SECTOR_MAP` didn't recognise the real
+  `economic_sector` values ("Commerce & Trade", "Health", "Other"). Now
+  case/whitespace-tolerant with the real values mapped.
+- **Items E1–E6 — the classification/provisioning engine** (the core
+  finding: the generator hardcoded **every loan to "Normal", 0
+  provisions**, which matched filed practice to date but not the law):
+  - **E1** — `lib/calculator.ts` `classifyByDays()` realigned to Art.
+    39(1): Watch starts at **1 day** in arrears, not 30. Removed the
+    0-29-day "Normal grace window" (it came from a BNR template
+    `CLASSIFICATION` sheet / TransUnion v1.9, both of which disagree with
+    the binding regulation). This is shared with the CRB generator and
+    admin UI — cross-checked. Reverses the 2026-08-23 "day-boundary fix".
+  - **E2** — real Art. 39(1) bucketing off `maturity_date`, wired into FS
+    rows 10 (provisions) / 12 (NPL) / 54 (provision movement) / 87–91
+    (classification totals). Provisions 0/1/20/50/100% by class.
+  - **E3** — Art. 39(2) cross-default: a borrower with >1 live loan has
+    every live loan take the worst class any one reaches.
+  - **E4** — Art. 47(c): a restructured loan (`restructured_from_loan_id`)
+    is floored at Watch while current; if it delays it passes through
+    normal day-count classification. Non-propagating (a current
+    restructured loan is not "past due", so it does not trigger 39(2)).
+  - **E5** — Art. 45: provisions computed on the balance **net of eligible
+    collateral**, with the per-kind haircuts (cash/securities 100%, land &
+    building 60%, movable 40%, guarantee/other/none 0%).
+  - **E6** — Art. 42: a per-loan classification rationale is emitted into
+    the internal `GENERATOR NOTES` sheet (why each loan sits where it
+    does, incl. cross-default driver and restructuring floor). Stripped
+    from the BNR-submission variant like the rest of that sheet.
+
+**Quantified impact** (real portfolio, as of Q3-2026): was everything
+Normal / NPL 0 / provisions 0. Now ~6 Watch + 1 Substandard, and a
+non-zero regulatory provision figure in the hundreds of thousands of RWF
+(exact number moves with the live portfolio and the report date). Two
+real cross-default cases surface (NKUBITO RUSAMAZA Desire Demino,
+MUHORAKEYE Providence — each has a current loan pulled to Watch by a
+past-due sibling loan).
+
+**Accepted caveat — the arrears clock (Kevin's deliberate decision as
+business owner, 2026-09-10):** the arrears age is measured from the loan's
+`maturity_date`, the field the system actually stores — NOT from a derived
+per-instalment schedule. For a multi-instalment loan whose first missed
+instalment predates maturity, this **understates** the arrears age and can
+classify it one category too favourably. Accepted for now; revisit if/when
+an instalment schedule is modelled. This is a real "floor", not an
+exact-compliance guarantee.
+
+**Not implemented (documented sub-gaps):**
+- Art. 39(2) close-relatives cross-default — INEMA has no related-parties
+  data model, so only same-borrower cross-default is applied.
+- Art. 40 cure/seasoning (step up one category at a time after arrears
+  cleared + 2 on-time instalments) — not modelled; classification is
+  point-in-time off current arrears age.
+- Historical quarters: this generator must not be used to reconstruct
+  pre-Jun-2026 filings (`iacm_loans` is missing real loans that existed
+  then — see the FS rows 126/128 note in `bnr-report.ts`).
+
+**FenAfrica product idea (noted, not built):** the same regulation rules
+could back a real per-company compliance-checking feature in the
+multi-tenant SaaS — separate future work.
+
 ## Real historical practice used periodic interest accrual — live system doesn't, and this is a policy question for Devotha
 
 **Found:** 2026-08-13, studying "INEMA JOURNAL AND ACCOUNTS-Updated(1)

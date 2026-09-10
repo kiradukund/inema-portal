@@ -253,23 +253,33 @@ export function getDaysOverdue(maturityDate: string, balance: number, today: Dat
 // separate places — lib/crb-report.ts, app/admin/page.tsx's portfolio chart,
 // app/admin/iacm/reports/bnr/page.tsx's descriptive copy, and
 // app/admin/iacm/loans/page.tsx's getBNRClass(). All four now call this.
-// Boundaries per the real BNR "CLASSIFICATION" sheet, cross-checked against
-// the TransUnion Rwanda Data Specification v1.9 — see
-// docs/bnr-codification-reference.json ("classification").
 //
-// NOTE: lib/bnr-report.ts deliberately does NOT use this to assign buckets —
-// it defaults every loan to Normal by real filed-practice policy (see that
-// file and docs/known-gaps.md "Loan classification"). This helper is for the
-// CRB generator (which classifies for real) and every day-bucket the admin
-// UI DISPLAYS.
+// Boundaries per REGULATION No 65/04/2023 OF 25/04/2023, Article 39(1):
+//   (a) normal:      current, no delay / unpaid instalment        -> 0 days
+//   (b) watch:       at least one instalment in arrears >= 1 day   -> 1-89
+//   (c) substandard: >= 90 days                                    -> 90-179
+//   (d) doubtful:    >= 180 days                                   -> 180-359
+//   (e) loss:        >= 360 days                                   -> 360+
+// Kevin's deliberate decision (2026-09-10, as business owner): apply the
+// regulation's "at least one day" for Watch. This REMOVES the earlier 0-29
+// day "Normal grace window" that came from a separate BNR "CLASSIFICATION"
+// template sheet / TransUnion v1.9 — those disagree with the binding
+// regulation, and the regulation wins. See docs/bnr-codification-reference.json
+// ("classification") and docs/known-gaps.md.
+//
+// NOTE: lib/bnr-report.ts historically defaulted every loan to Normal by
+// filed-practice policy; that is being replaced (Item E, 2026-09-10) with
+// real Article 39 classification. This helper is used by the BNR generator
+// (Item E2 onward), the CRB generator (which already classifies for real),
+// and every day-bucket the admin UI DISPLAYS.
 export type BnrClass = 1 | 2 | 3 | 4 | 5
 
 export function classifyByDays(days: number): BnrClass {
-  if (days <= 29) return 1   // Normal — real 0–29 day grace window
-  if (days <= 89) return 2   // Watch
-  if (days <= 179) return 3  // Substandard
-  if (days <= 359) return 4  // Doubtful
-  return 5                   // Loss
+  if (days <= 0) return 1    // Normal — current, no arrears (Art. 39(1)(a)); also covers getDaysOverdue()'s -1 for a fully-repaid loan
+  if (days <= 89) return 2   // Watch — at least one day in arrears (Art. 39(1)(b))
+  if (days <= 179) return 3  // Substandard — at least 90 days (Art. 39(1)(c))
+  if (days <= 359) return 4  // Doubtful — at least 180 days (Art. 39(1)(d))
+  return 5                   // Loss — at least 360 days (Art. 39(1)(e))
 }
 
 export const BNR_CLASS_LABEL: Record<BnrClass, string> = {
@@ -279,7 +289,7 @@ export const BNR_CLASS_LABEL: Record<BnrClass, string> = {
 // Day-range strings, kept next to the boundaries above so descriptive UI copy
 // can't drift from the real thresholds.
 export const BNR_CLASS_DAY_RANGE: Record<BnrClass, string> = {
-  1: '0-29', 2: '30-89', 3: '90-179', 4: '180-359', 5: '360+',
+  1: '0', 2: '1-89', 3: '90-179', 4: '180-359', 5: '360+',
 }
 
 // "Normal (0-29d)" style labels for chart legends.

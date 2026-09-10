@@ -24,17 +24,17 @@
   },
 
   "classification": {
-    "description": "BNR/CRB loan classification by days in arrears. Used live by lib/crb-report.ts classifyByDays().",
-    "status": "USED — see fix dated 2026-08-23 in docs/known-gaps.md (day-boundary bug: days 1-29 were incorrectly falling into Watch instead of Normal)",
+    "description": "BNR/CRB loan classification by days in arrears. Used live by lib/calculator.ts classifyByDays() (CRB generator, BNR generator from Item E2, admin UI).",
+    "status": "USED — boundaries realigned 2026-09-10 to REGULATION No 65/04/2023 Article 39(1). Kevin's deliberate decision as business owner (Item E1): the regulation's 'at least one day' for Watch supersedes the 0-29 day 'Normal grace window' previously carried from the bnr-template 'CLASSIFICATION' sheet / transunion-v1.9. Those two sources disagree with the binding regulation; the regulation wins. The 2026-08-23 'day-boundary fix' that had moved days 1-29 from Watch to Normal is hereby reversed.",
     "codes": [
-      { "code": 1, "label": "NORMAL RISK", "daysMin": 0, "daysMax": 29 },
-      { "code": 2, "label": "WATCH", "daysMin": 30, "daysMax": 89 },
-      { "code": 3, "label": "SUBSTANDARD", "daysMin": 90, "daysMax": 179 },
-      { "code": 4, "label": "DOUBTFUL", "daysMin": 180, "daysMax": 359 },
-      { "code": 5, "label": "LOSS", "daysMin": 360, "daysMax": null },
-      { "code": 6, "label": "WRITE OFF", "daysMin": null, "daysMax": null, "note": "Administrative sub-designation of Loss (code 5) per the source sheet ('360 being in class 5') — not derivable from days in arrears alone; requires an explicit write-off decision. Never auto-assigned by classifyByDays()." }
+      { "code": 1, "label": "NORMAL RISK", "daysMin": 0, "daysMax": 0, "note": "Art. 39(1)(a): current, no delay or unpaid instalment. 0% provision." },
+      { "code": 2, "label": "WATCH", "daysMin": 1, "daysMax": 89, "note": "Art. 39(1)(b): at least one instalment in arrears for at least ONE day. 1% provision." },
+      { "code": 3, "label": "SUBSTANDARD", "daysMin": 90, "daysMax": 179, "note": "Art. 39(1)(c): >= 90 days. 20% provision." },
+      { "code": 4, "label": "DOUBTFUL", "daysMin": 180, "daysMax": 359, "note": "Art. 39(1)(d): >= 180 days. 50% provision." },
+      { "code": 5, "label": "LOSS", "daysMin": 360, "daysMax": null, "note": "Art. 39(1)(e): >= 360 days. 100% provision." },
+      { "code": 6, "label": "WRITE OFF", "daysMin": null, "daysMax": null, "note": "Art. 41: >= 1 year in Loss class + board approval. Not derivable from days in arrears alone; never auto-assigned by classifyByDays()." }
     ],
-    "sourceNote": "Day boundaries from bnr-template, sheet 'CLASSIFICATION'. That sheet's Substandard row literally reads '90 - 189', which would overlap Doubtful's '180-359' start by 10 days — treated here as a typo for '90-179' for continuity with the adjacent rows. Label text and 1-6 ordering independently confirmed against transunion-v1.9 (Consumer p.14 and Corporate p.24, both list 1=NORMAL RISK...6=WRITE OFF) — this resolved an apparent order discrepancy in Kevin's own paraphrase of bnr-codification-2010, which is treated as a recollection slip rather than a genuine third variant, since the two more detailed/recent sources agree with each other exactly."
+    "sourceNote": "PRIMARY SOURCE as of 2026-09-10: 'Regulation No 65/04/2023 of 25/04/2023 governing non-deposit-taking financial service providers' (the binding BNR regulation; official BNR publication, not stored in this repo), Article 39(1): 'watch: loans or commitments with at least one or part of the instalment in arrears for at least one day.' Provision rates 0/1/20/50/100% from the same article; Art. 39(2) cross-default, Art. 41 write-off, Art. 42 documentation, Art. 45 collateral haircuts, Art. 47(c) restructured-loan classification also implemented (Items E3-E6). This supersedes the earlier day boundaries from bnr-template sheet 'CLASSIFICATION' (which had a 0-29 Normal window and a '90 - 189' Substandard typo). transunion-v1.9 (Consumer p.14 / Corporate p.24) is retained only as the label/ordering cross-reference (1=NORMAL RISK .. 6=WRITE OFF), not as the day-boundary authority."
   },
 
   "nature": {

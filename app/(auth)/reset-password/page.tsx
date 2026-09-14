@@ -14,7 +14,21 @@ export default function ResetPassword() {
   const supabase = createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!)
 
   useEffect(() => {
-    supabase.auth.onAuthStateChange((event) => { if (event === 'PASSWORD_RECOVERY') setReady(true) })
+    // Real, confirmed fix (2026-09-14): this page is reached from TWO real
+    // link types -- a password-reset link (type=recovery) and a staff
+    // invite link (type=invite, via inviteUserByEmail()). Confirmed
+    // directly against the installed @supabase/auth-js source
+    // (GoTrueClient.js): only a `recovery`-type link's URL-based session
+    // fires PASSWORD_RECOVERY -- every other type (invite included) fires
+    // SIGNED_IN instead. Listening for PASSWORD_RECOVERY alone left an
+    // invite link's real recipient stuck forever on "Verifying reset
+    // link..." -- found and fixed before ever sending a real invite, not
+    // after. Scoped safely: a normal, already-signed-in visit to this page
+    // doesn't re-fire SIGNED_IN (no new session is being established), so
+    // this only ever triggers for a genuine URL-token-based arrival.
+    supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY' || event === 'SIGNED_IN') setReady(true)
+    })
   }, [])
 
   async function submit() {

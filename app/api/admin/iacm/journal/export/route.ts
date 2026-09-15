@@ -96,18 +96,27 @@ export async function GET() {
     rows.forEach((r, i) => {
       const rowNum = DATA_START_ROW + i
       const row = ws.getRow(rowNum)
-      // Column 4 (Account code) is written as a real VLOOKUP formula against
-      // the Accounts sheet, deriving the code from column 5's account name —
-      // matching exactly what the template's own original rows did before
-      // this export route existed. Writing the code as a literal (the old
-      // behavior) silently destroyed that link on every export: the Accounts
-      // sheet and the Journal sheet could drift apart with nothing to catch
-      // it. See docs/accounting-reference.md, Addendum item 2.
-      const values: Array<string | number | { formula: string; result: any } | null> = [
+      // Piece 3 (2026-09-15): Column 4 (Account code) is now written as a
+      // real, backend-calculated literal -- account_code exactly as
+      // stored on the real iacm_journal_lines row, not re-derived via a
+      // live VLOOKUP against column 5's account name. Re-examined the
+      // real mechanism directly before making this change (not just
+      // trusting the prior VLOOKUP-restoration reasoning in
+      // docs/accounting-reference.md, Addendum item 2): the real 2026
+      // 6280 drift was always in account_NAME (two different real
+      // spellings written by two different real processes), never in
+      // account_code, which is an independently-stored, already-correct
+      // column on every real line. The VLOOKUP didn't protect the code --
+      // it made a NAME-spelling mismatch show up as a WRONG code (0) on
+      // an otherwise real, valid transaction, which is a worse real
+      // failure mode than a literal, always-correct code. A literal here
+      // is strictly more correct, for every row, independent of whatever
+      // account_name text that row happens to carry.
+      const values: Array<string | number | null> = [
         monthLabel(r.date),
         dayLabel(r.date),
         r.narration,
-        { formula: `IFERROR(VLOOKUP(E${rowNum},Accounts!$B$2:$C$66,2,FALSE),0)`, result: Number(r.accountCode) || r.accountCode },
+        r.accountCode,
         r.accountName,
         r.debit || null,
         r.credit || null,

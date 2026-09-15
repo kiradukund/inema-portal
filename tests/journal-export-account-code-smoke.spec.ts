@@ -99,7 +99,13 @@ describe('Journal export -- account code written as a backend literal (Piece 3)'
     const templatePath = path.join(process.cwd(), 'public', 'journal_template.xlsx')
     const templateWb = new ExcelJS.Workbook()
     await templateWb.xlsx.load(readFileSync(templatePath) as any)
+    // Real, explicit check + throw -- matching the exact same convention
+    // the real export route itself uses for its own getWorksheet() call
+    // (`if (!ws) throw new Error(...)`), not a silent non-null assertion.
+    // A missing Accounts sheet in the real template is a genuine, loud
+    // failure this test should never paper over.
     const accountsWs = templateWb.getWorksheet('Accounts')
+    if (!accountsWs) throw new Error('"Accounts" sheet not found in the real journal_template.xlsx')
     let realAccountsSheetNameFor6280 = ''
     for (let r = 1; r <= accountsWs.rowCount; r++) {
       if (String(accountsWs.getRow(r).getCell(3).value) === '6280') {

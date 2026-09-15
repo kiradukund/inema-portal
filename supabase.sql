@@ -727,3 +727,67 @@ alter table iacm_loan_recalculations enable row level security;
 create policy "admin_only_iacm_loan_recalculations" on iacm_loan_recalculations
   for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
 create index if not exists idx_iacm_loan_recalculations_loan_id on iacm_loan_recalculations(loan_id);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Piece 1 (2026-09-14): audit trail for the real VAT Return Summary
+-- (app/api/admin/iacm/vat-return, lib/vat-return.ts). Same real
+-- accountability standard as the Super-Admin loan-types audit trail and
+-- the recalculation table above -- one row written every time the report
+-- is actually generated, a permanent record of exactly what was shown at
+-- that moment (Output VAT / Input VAT / Net Payable for the period),
+-- distinct from the live ledger which keeps moving. Read-only report
+-- feature -- this table is written to, never used to drive any real
+-- posting; no lines/relationship to iacm_journal_entries beyond what the
+-- report itself already queried. Admin-only RLS, same pattern as every
+-- other iacm_* table.
+create table if not exists iacm_vat_returns (
+  id                    uuid primary key default uuid_generate_v4(),
+  period_start          date not null,
+  period_end            date not null,
+  output_vat            numeric(15,2) not null,
+  input_vat             numeric(15,2) not null,
+  net_payable           numeric(15,2) not null,
+  paid_this_period      numeric(15,2) not null,
+  unclassified_count    int not null default 0,
+  generated_by_user_id  uuid references profiles(id),
+  generated_by_name     text not null,
+  created_at            timestamptz not null default now()
+);
+alter table iacm_vat_returns enable row level security;
+create policy "admin_only_iacm_vat_returns" on iacm_vat_returns
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create index if not exists idx_iacm_vat_returns_period on iacm_vat_returns(period_start, period_end);
+
+-- ═══════════════════════════════════════════════════════════════════════════
+-- Piece 2 (2026-09-14): the real Interest Accruals feature
+-- (lib/interest-accrual.ts, app/api/admin/iacm/interest-accrual/*). One
+-- row per real loan per real accrual run -- the itemized, per-client,
+-- per-period detail Devotha currently keeps only in her own hand-
+-- maintained "Interest Calculations" sheet, with the real Journal today
+-- showing only a lump sum for most of it. journal_entry_id is NOT NULL
+-- by design: a row here is only ever written at CONFIRM time (never at
+-- preview), by which point the real journal entry for it has already
+-- been posted -- so every real row is always backed by a real, posted
+-- entry, never a dangling reference. Admin-only RLS, same pattern as
+-- every other iacm_* table.
+create table if not exists iacm_interest_accruals (
+  id                    uuid primary key default uuid_generate_v4(),
+  loan_id               uuid not null references iacm_loans(id),
+  loan_number           text not null,
+  client_name           text not null,
+  period_start          date not null,
+  period_end            date not null,
+  months                int not null,
+  balance_at_accrual    numeric(15,2) not null,
+  monthly_rate          numeric(6,4) not null,
+  interest_amount       numeric(15,2) not null,
+  journal_entry_id      uuid not null references iacm_journal_entries(id),
+  created_by_user_id    uuid references profiles(id),
+  created_by_name       text not null,
+  created_at            timestamptz not null default now()
+);
+alter table iacm_interest_accruals enable row level security;
+create policy "admin_only_iacm_interest_accruals" on iacm_interest_accruals
+  for all using (exists (select 1 from profiles where id = auth.uid() and role = 'admin'));
+create index if not exists idx_iacm_interest_accruals_loan_id on iacm_interest_accruals(loan_id);
+create index if not exists idx_iacm_interest_accruals_period on iacm_interest_accruals(period_start, period_end);

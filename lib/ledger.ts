@@ -23,7 +23,7 @@ export type NormalSide = 'debit' | 'credit'
 export interface Account {
   code: string
   name: string
-  category: 'asset' | 'liability' | 'equity'
+  category: 'asset' | 'liability' | 'equity' | 'income' | 'expense'
   normalSide: NormalSide
 }
 
@@ -57,8 +57,53 @@ export const CHART_OF_ACCOUNTS: Account[] = [
   { code: '1050', name: 'Retained Earnings', category: 'equity', normalSide: 'credit' },
 ]
 
+// Piece 0 (2026-09-14): the real 6xxx/7xxx income/expense codes,
+// deliberately kept OUT of CHART_OF_ACCOUNTS itself rather than appended
+// to it -- getTrialBalance() (below) maps over every entry in that array
+// and computes a point-in-time getAccountBalance() for each, for the real
+// Journal Entries list page. An income/expense account is a PERIOD-FLOW
+// concept (what getAccountMovementSum() exists for), not a running
+// point-in-time balance the way an asset/liability/equity account is --
+// appending these here would have silently added meaningless "balance
+// since cutoff" rows to that real, existing page. A separate array keeps
+// accountByCode() below as the one real place new code resolves an
+// account name from (closing the documented drift risk in
+// docs/accounting-reference.md, Addendum item 2 -- e.g. 6280 was
+// independently spelled "Bank Charges & Commissions" in
+// app/api/admin/iacm/expenses/route.ts's own EXPENSE_ACCOUNTS map vs the
+// real Accounts sheet's "Bank charges "), without retrofitting any
+// existing route today -- that map is untouched; only NEW code (Pieces
+// 1-2) resolves through this registry. Names are the exact, authoritative
+// spelling read directly from the real Accounts sheet
+// (public/journal_template.xlsx), trailing whitespace trimmed.
+export const INCOME_EXPENSE_ACCOUNTS: Account[] = [
+  { code: '6010', name: 'Interest on Borrowings', category: 'expense', normalSide: 'debit' },
+  { code: '6110', name: 'Salaries & Wages', category: 'expense', normalSide: 'debit' },
+  { code: '6120', name: 'Staff Benefits & Welfare', category: 'expense', normalSide: 'debit' },
+  { code: '6210', name: 'Office rent', category: 'expense', normalSide: 'debit' },
+  { code: '6220', name: 'Utilities', category: 'expense', normalSide: 'debit' },
+  { code: '6230', name: 'IT & Software Expenses', category: 'expense', normalSide: 'debit' },
+  { code: '6240', name: 'Depreciation & Amortization', category: 'expense', normalSide: 'debit' },
+  { code: '6250', name: 'Legal & Professional Fees', category: 'expense', normalSide: 'debit' },
+  { code: '6260', name: 'Travel & Transport', category: 'expense', normalSide: 'debit' },
+  { code: '6270', name: 'Communication Expenses', category: 'expense', normalSide: 'debit' },
+  { code: '6280', name: 'Bank charges', category: 'expense', normalSide: 'debit' },
+  { code: '6290', name: 'Income tax expense', category: 'expense', normalSide: 'debit' },
+  { code: '6300', name: 'Miscellaneous Expenses', category: 'expense', normalSide: 'debit' },
+  { code: '7010', name: 'Interest Income on Loans', category: 'income', normalSide: 'credit' },
+  { code: '7020', name: 'Fees & Commission Income', category: 'income', normalSide: 'credit' },
+  { code: '7030', name: 'Penalty & Late Payment Charges', category: 'income', normalSide: 'credit' },
+  { code: '7110', name: 'Investment Income', category: 'income', normalSide: 'credit' },
+  { code: '7120', name: 'Other Miscellaneous Income', category: 'income', normalSide: 'credit' },
+]
+
+// The one real place any NEW code should resolve an account name from,
+// covering both the balance-sheet chart and the income/expense registry
+// above. Existing routes with their own inline code/name literals are
+// deliberately left untouched (minimal scope, confirmed with Kevin) --
+// this only guarantees no THIRD spelling gets introduced going forward.
 export function accountByCode(code: string): Account | undefined {
-  return CHART_OF_ACCOUNTS.find(a => a.code === code)
+  return CHART_OF_ACCOUNTS.find(a => a.code === code) ?? INCOME_EXPENSE_ACCOUNTS.find(a => a.code === code)
 }
 
 function toNaturalBalance(account: Account | undefined, debit: number, credit: number): number {
